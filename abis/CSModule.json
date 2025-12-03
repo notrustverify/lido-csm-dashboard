@@ -1,0 +1,55 @@
+[
+  {
+    "name": "getNodeOperator",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"}
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {"name": "totalAddedKeys", "type": "uint32"},
+          {"name": "totalWithdrawnKeys", "type": "uint32"},
+          {"name": "totalDepositedKeys", "type": "uint32"},
+          {"name": "totalVettedKeys", "type": "uint32"},
+          {"name": "stuckValidatorsCount", "type": "uint32"},
+          {"name": "depositableValidatorsCount", "type": "uint32"},
+          {"name": "targetLimit", "type": "uint32"},
+          {"name": "targetLimitMode", "type": "uint8"},
+          {"name": "totalExitedKeys", "type": "uint32"},
+          {"name": "enqueuedCount", "type": "uint32"},
+          {"name": "managerAddress", "type": "address"},
+          {"name": "proposedManagerAddress", "type": "address"},
+          {"name": "rewardAddress", "type": "address"},
+          {"name": "proposedRewardAddress", "type": "address"},
+          {"name": "extendedManagerPermissions", "type": "bool"}
+        ]
+      }
+    ]
+  },
+  {
+    "name": "getNodeOperatorsCount",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "getSigningKeys",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"},
+      {"name": "startIndex", "type": "uint256"},
+      {"name": "keysCount", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "", "type": "bytes"}
+    ]
+  }
+]

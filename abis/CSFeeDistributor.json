@@ -1,0 +1,44 @@
+[
+  {
+    "name": "treeCid",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {"name": "", "type": "string"}
+    ]
+  },
+  {
+    "name": "distributedShares",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "getFeesToDistribute",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"},
+      {"name": "cumulativeFeeShares", "type": "uint256"},
+      {"name": "proof", "type": "bytes32[]"}
+    ],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "treeRoot",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {"name": "", "type": "bytes32"}
+    ]
+  }
+]

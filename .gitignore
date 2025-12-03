@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / compiled files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+
+# Editor-specific files
+.vscode/ # VS Code specific settings (consider what you want to ignore here)
+
+# IDE-specific files
+.idea/ # IntelliJ IDEA related files
+
+# OS-specific files
+.DS_Store # macOS
+Thumbs.db # Windows
+
+# Testing
+.pytest_cache/
+.coverage
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/

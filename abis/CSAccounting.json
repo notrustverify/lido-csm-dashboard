@@ -1,0 +1,37 @@
+[
+  {
+    "name": "getBondSummary",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "current", "type": "uint256"},
+      {"name": "required", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "getBondSummaryShares",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "current", "type": "uint256"},
+      {"name": "required", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "getClaimableBondShares",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
+  }
+]

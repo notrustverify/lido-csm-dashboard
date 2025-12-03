@@ -1,0 +1,42 @@
+[
+  {
+    "name": "getPooledEthByShares",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "_sharesAmount", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "getSharesByPooledEth",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "_pooledEthAmount", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "getTotalPooledEther",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "getTotalShares",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
+  }
+]
