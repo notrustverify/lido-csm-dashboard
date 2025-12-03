@@ -1,6 +1,7 @@
 """Typer CLI commands with Rich formatting."""
 
 import asyncio
+import json
 import time
 from typing import Optional
 
@@ -9,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ..core.types import OperatorRewards
 from ..services.operator_service import OperatorService
 
 app = typer.Typer(
@@ -23,6 +25,30 @@ def run_async(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
 
+def format_as_api_json(rewards: OperatorRewards) -> dict:
+    """Format rewards data in the same structure as the API endpoint."""
+    return {
+        "operator_id": rewards.node_operator_id,
+        "manager_address": rewards.manager_address,
+        "reward_address": rewards.reward_address,
+        "rewards": {
+            "current_bond_eth": float(rewards.current_bond_eth),
+            "required_bond_eth": float(rewards.required_bond_eth),
+            "excess_bond_eth": float(rewards.excess_bond_eth),
+            "cumulative_rewards_shares": rewards.cumulative_rewards_shares,
+            "distributed_shares": rewards.distributed_shares,
+            "unclaimed_shares": rewards.unclaimed_shares,
+            "unclaimed_eth": float(rewards.unclaimed_eth),
+            "total_claimable_eth": float(rewards.total_claimable_eth),
+        },
+        "validators": {
+            "total": rewards.total_validators,
+            "active": rewards.active_validators,
+            "exited": rewards.exited_validators,
+        },
+    }
+
+
 @app.command()
 def check(
     address: str = typer.Argument(
@@ -34,6 +60,9 @@ def check(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc", "-r", help="Custom RPC URL"
     ),
+    output_json: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (same format as API)"
+    ),
 ):
     """
     Check CSM operator rewards and earnings.
@@ -41,21 +70,36 @@ def check(
     Examples:
         csm check 0xYourAddress
         csm check 0xYourAddress --id 42
+        csm check 0xYourAddress --json
     """
-    console.print()
-
     service = OperatorService(rpc_url)
 
-    with console.status("[bold blue]Fetching operator data..."):
+    if not output_json:
+        console.print()
+        with console.status("[bold blue]Fetching operator data..."):
+            if operator_id is not None:
+                rewards = run_async(service.get_operator_by_id(operator_id))
+            else:
+                console.print(f"[dim]Looking up operator for address: {address}[/dim]")
+                rewards = run_async(service.get_operator_by_address(address))
+    else:
+        # JSON mode - no status output
         if operator_id is not None:
             rewards = run_async(service.get_operator_by_id(operator_id))
         else:
-            console.print(f"[dim]Looking up operator for address: {address}[/dim]")
             rewards = run_async(service.get_operator_by_address(address))
 
     if rewards is None:
-        console.print("[red]No CSM operator found for this address/ID[/red]")
+        if output_json:
+            print(json.dumps({"error": "Operator not found"}, indent=2))
+        else:
+            console.print("[red]No CSM operator found for this address/ID[/red]")
         raise typer.Exit(1)
+
+    # JSON output mode
+    if output_json:
+        print(json.dumps(format_as_api_json(rewards), indent=2))
+        return
 
     # Header panel
     console.print(
