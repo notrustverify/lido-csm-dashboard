@@ -227,7 +227,7 @@ The dashboard shows three APY metrics when using the `--detailed` flag:
 
 ### How APY is Calculated
 
-**Reward APY** is calculated from actual on-chain reward distributions stored on IPFS. The dashboard fetches all historical distribution frames since CSM launched (December 2024) to calculate both 28-day and lifetime APY.
+**Reward APY** is calculated from actual reward distribution data published by Lido. Every ~28 days, Lido calculates how much each operator earned and publishes a "distribution frame" to IPFS (a decentralized file storage network). The dashboard fetches all these historical frames to calculate both 28-day and lifetime APY.
 
 - **28-Day APY**: Based on the most recent ~28 days of reward distributions
 - **Lifetime APY**: Based on all periods where you earned rewards (excludes ramp-up periods with no rewards to avoid misleadingly low numbers)
@@ -238,7 +238,7 @@ The dashboard shows three APY metrics when using the `--detailed` flag:
 
 ### Why You Might Want an Etherscan API Key
 
-To calculate accurate lifetime APY, the dashboard needs to find all historical reward distributions. This data lives on the Ethereum blockchain, and accessing it can be done in several ways:
+The actual reward data lives on IPFS and is always accessible. However, to *discover* which IPFS files exist, the dashboard needs to find historical `DistributionLogUpdated` events on the blockchain. This can be done in several ways:
 
 | Method | Description |
 |--------|-------------|

@@ -22,7 +22,7 @@ console = Console()
 
 def run_async(coro):
     """Helper to run async functions from sync CLI."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def format_as_api_json(rewards: OperatorRewards, include_validators: bool = False) -> dict:
