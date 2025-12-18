@@ -129,6 +129,8 @@ class IPFSLogProvider:
         Returns (start_epoch, end_epoch).
         """
         frame = log_data.get("frame", [0, 0])
+        if not isinstance(frame, list) or len(frame) < 2:
+            return (0, 0)
         return (frame[0], frame[1])
 
     async def get_operator_history(
