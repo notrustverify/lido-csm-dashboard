@@ -2,11 +2,13 @@
 
 from functools import lru_cache
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # RPC Configuration
     eth_rpc_url: str = "https://eth.llamarpc.com"
@@ -32,10 +34,6 @@ class Settings(BaseSettings):
     csfeedistributor_address: str = "0xD99CC66fEC647E68294C6477B40fC7E0F6F618D0"
     csstrikes_address: str = "0xaa328816027F2D32B9F56d190BC9Fa4A5C07637f"
     steth_address: str = "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 @lru_cache
