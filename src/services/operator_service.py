@@ -232,11 +232,11 @@ class OperatorService:
         try:
             summary = await self.strikes.get_operator_strike_summary(operator_id)
             strike_summary = StrikeSummary(
-                total_validators_with_strikes=summary["total_validators_with_strikes"],
-                validators_at_risk=summary["validators_at_risk"],
-                validators_near_ejection=summary["validators_near_ejection"],
-                total_strikes=summary["total_strikes"],
-                max_strikes=summary["max_strikes"],
+                total_validators_with_strikes=summary.get("total_validators_with_strikes", 0),
+                validators_at_risk=summary.get("validators_at_risk", 0),
+                validators_near_ejection=summary.get("validators_near_ejection", 0),
+                total_strikes=summary.get("total_strikes", 0),
+                max_strikes=summary.get("max_strikes", 0),
             )
         except Exception:
             # If strikes fetch fails, continue with empty summary
@@ -290,9 +290,10 @@ class OperatorService:
 
         # Pad to ensure we always have `count` entries (for UI consistency)
         # Pad at the beginning since strikes array is ordered oldest to newest
+        frame_number = 1
         while len(frame_dates) < count:
-            idx = count - len(frame_dates)
-            frame_dates.insert(0, {"start": f"Frame {idx}", "end": ""})
+            frame_dates.insert(0, {"start": f"Frame {frame_number}", "end": ""})
+            frame_number += 1
 
         return frame_dates
 
