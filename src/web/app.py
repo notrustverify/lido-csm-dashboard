@@ -533,13 +533,19 @@ def create_app() -> FastAPI:
                         h.strikes.max_strikes >= 3
                     ) {
                         // Critical issues (red)
-                        document.getElementById('health-overall').innerHTML = '<span class="text-red-400">Issues detected - action required!</span>';
+                        let message = 'Issues detected - action required!';
+                        if (h.strikes.max_strikes >= 3) {
+                            message = `Validator ejectable (${h.strikes.validators_at_risk} at 3/3 strikes)`;
+                        }
+                        document.getElementById('health-overall').innerHTML = `<span class="text-red-400">${message}</span>`;
                     } else if (h.strikes.max_strikes === 2) {
-                        // Warning level 2 (orange)
-                        document.getElementById('health-overall').innerHTML = '<span class="text-orange-400">Warning - 2 strikes detected</span>';
+                        // Warning level 2 (orange) - one more strike = ejectable
+                        document.getElementById('health-overall').innerHTML =
+                            `<span class="text-orange-400">Warning - ${h.strikes.validators_near_ejection} validator(s) at 2/3 strikes</span>`;
                     } else {
-                        // Warning level 1 (yellow)
-                        document.getElementById('health-overall').innerHTML = '<span class="text-yellow-400">Warning - strikes detected</span>';
+                        // Warning level 1 (yellow) - has strikes but not critical
+                        document.getElementById('health-overall').innerHTML =
+                            '<span class="text-yellow-400">Warning - validator(s) have strikes</span>';
                     }
 
                     healthSection.classList.remove('hidden');
