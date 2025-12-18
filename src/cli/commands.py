@@ -87,7 +87,9 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
             "strikes": {
                 "total_validators_with_strikes": rewards.health.strikes.total_validators_with_strikes,
                 "validators_at_risk": rewards.health.strikes.validators_at_risk,
+                "validators_near_ejection": rewards.health.strikes.validators_near_ejection,
                 "total_strikes": rewards.health.strikes.total_strikes,
+                "max_strikes": rewards.health.strikes.max_strikes,
             },
             "has_issues": rewards.health.has_issues,
         }
