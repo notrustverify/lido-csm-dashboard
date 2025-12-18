@@ -143,7 +143,7 @@ def create_app() -> FastAPI:
                         <span id="health-slashed" class="font-medium">--</span>
                     </div>
                     <div class="flex justify-between items-center">
-                        <span class="text-gray-400">At Risk (&lt;32 ETH)</span>
+                        <span class="text-gray-400">At Risk (<32 ETH)</span>
                         <span id="health-at-risk" class="font-medium">--</span>
                     </div>
                     <div class="flex justify-between items-center">
@@ -327,13 +327,13 @@ def create_app() -> FastAPI:
                 document.getElementById('active-validators').textContent = data.validators.active;
                 document.getElementById('exited-validators').textContent = data.validators.exited;
 
-                document.getElementById('current-bond').textContent = data.rewards.current_bond_eth.toFixed(6);
-                document.getElementById('required-bond').textContent = data.rewards.required_bond_eth.toFixed(6);
-                document.getElementById('excess-bond').textContent = data.rewards.excess_bond_eth.toFixed(6);
-                document.getElementById('cumulative-rewards').textContent = data.rewards.cumulative_rewards_eth.toFixed(6);
-                document.getElementById('distributed-rewards').textContent = data.rewards.distributed_eth.toFixed(6);
-                document.getElementById('unclaimed-rewards').textContent = data.rewards.unclaimed_eth.toFixed(6);
-                document.getElementById('total-claimable').textContent = data.rewards.total_claimable_eth.toFixed(6);
+                document.getElementById('current-bond').textContent = (data.rewards?.current_bond_eth ?? 0).toFixed(6);
+                document.getElementById('required-bond').textContent = (data.rewards?.required_bond_eth ?? 0).toFixed(6);
+                document.getElementById('excess-bond').textContent = (data.rewards?.excess_bond_eth ?? 0).toFixed(6);
+                document.getElementById('cumulative-rewards').textContent = (data.rewards?.cumulative_rewards_eth ?? 0).toFixed(6);
+                document.getElementById('distributed-rewards').textContent = (data.rewards?.distributed_eth ?? 0).toFixed(6);
+                document.getElementById('unclaimed-rewards').textContent = (data.rewards?.unclaimed_eth ?? 0).toFixed(6);
+                document.getElementById('total-claimable').textContent = (data.rewards?.total_claimable_eth ?? 0).toFixed(6);
 
                 results.classList.remove('hidden');
             } catch (err) {
@@ -343,7 +343,12 @@ def create_app() -> FastAPI:
             }
         });
 
+        let isLoadingDetails = false;
+
         loadDetailsBtn.addEventListener('click', async () => {
+            if (isLoadingDetails) return;
+            isLoadingDetails = true;
+
             const operatorId = document.getElementById('operator-id').textContent;
 
             // Show loading, hide button
@@ -505,7 +510,11 @@ def create_app() -> FastAPI:
                         // Auto-load strikes data when there are strikes
                         loadStrikesData();
 
-                        toggleStrikesBtn.onclick = async () => {
+                        // Remove old listener to prevent memory leak
+                        if (toggleStrikesBtn._clickHandler) {
+                            toggleStrikesBtn.removeEventListener('click', toggleStrikesBtn._clickHandler);
+                        }
+                        toggleStrikesBtn._clickHandler = async () => {
                             if (strikesList.classList.contains('hidden')) {
                                 // Expand
                                 if (!strikesLoaded) {
@@ -520,6 +529,7 @@ def create_app() -> FastAPI:
                                 toggleStrikesBtn.textContent = 'Show validator details ▼';
                             }
                         };
+                        toggleStrikesBtn.addEventListener('click', toggleStrikesBtn._clickHandler);
                     }
 
                     // Overall - color-coded by severity
@@ -554,6 +564,8 @@ def create_app() -> FastAPI:
                 detailsLoading.classList.add('hidden');
                 loadDetailsBtn.classList.remove('hidden');
                 loadDetailsBtn.textContent = 'Failed - Click to Retry';
+            } finally {
+                isLoadingDetails = false;
             }
         });
     </script>
