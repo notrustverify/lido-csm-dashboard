@@ -24,6 +24,8 @@ async def get_operator(
     # Determine if this is an ID or address
     if identifier.isdigit():
         operator_id = int(identifier)
+        if operator_id < 0 or operator_id > 1_000_000:
+            raise HTTPException(status_code=400, detail="Invalid operator ID")
         rewards = await service.get_operator_by_id(operator_id, detailed)
     elif identifier.startswith("0x"):
         rewards = await service.get_operator_by_address(identifier, detailed)
