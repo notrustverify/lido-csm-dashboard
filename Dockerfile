@@ -17,6 +17,11 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Copy package files and install
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir .
+
 # Final stage
 FROM python:3.11-slim
 
@@ -27,21 +32,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy virtual environment from builder
+# Copy virtual environment from builder (includes installed package)
 COPY --from=builder /opt/venv /opt/venv
-
-# Copy application code (includes abis inside src/)
-COPY src ./src
-
-# Create csm alias script
-RUN echo '#!/bin/sh\npython -m src.main "$@"' > /usr/local/bin/csm && \
-    chmod +x /usr/local/bin/csm
 
 # Set environment variables
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app
+    PYTHONDONTWRITEBYTECODE=1
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
@@ -50,5 +47,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # Expose port for web dashboard
 EXPOSE 3000
 
-# Default command - run the web dashboard using csm alias
+# Default command - csm is now a proper entry point from pip install
 CMD ["csm", "serve", "--host", "0.0.0.0", "--port", "3000"]
