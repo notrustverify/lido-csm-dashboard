@@ -3,12 +3,26 @@
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 import httpx
 
 from ..core.config import get_settings
+
+
+# Ethereum Beacon Chain genesis timestamp (Dec 1, 2020 12:00:23 UTC)
+BEACON_GENESIS = 1606824023
+
+
+def epoch_to_datetime(epoch: int) -> datetime:
+    """Convert beacon chain epoch to datetime.
+
+    Each epoch is 32 slots * 12 seconds = 384 seconds.
+    """
+    timestamp = BEACON_GENESIS + (epoch * 384)
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
 
 @dataclass
