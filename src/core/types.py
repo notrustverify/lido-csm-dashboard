@@ -60,6 +60,16 @@ class DistributionFrame(BaseModel):
     apy: float | None = None  # Annualized for this frame
 
 
+class WithdrawalEvent(BaseModel):
+    """A single reward claim/withdrawal event."""
+
+    block_number: int
+    timestamp: str  # ISO format
+    shares: int
+    eth_value: float
+    tx_hash: str
+
+
 class APYMetrics(BaseModel):
     """APY calculations for an operator.
 
@@ -100,6 +110,16 @@ class APYMetrics(BaseModel):
 
     # Full frame history (only populated with --history flag)
     frames: list[DistributionFrame] | None = None
+
+    # Bond stETH earnings (estimated from stETH rebasing)
+    previous_bond_eth: float | None = None
+    current_bond_eth: float | None = None
+    lifetime_bond_eth: float | None = None
+
+    # Net total stETH (Rewards + Bond)
+    previous_net_total_eth: float | None = None
+    current_net_total_eth: float | None = None
+    lifetime_net_total_eth: float | None = None
 
     # Legacy fields (deprecated, kept for backwards compatibility)
     reward_apy_7d: float | None = None
@@ -182,3 +202,6 @@ class OperatorRewards(BaseModel):
 
     # Health status (optional, requires detailed lookup)
     health: HealthStatus | None = None
+
+    # Withdrawal history (optional, populated with --history flag)
+    withdrawals: list[WithdrawalEvent] | None = None
