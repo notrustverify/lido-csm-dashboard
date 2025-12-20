@@ -9,6 +9,7 @@ from ..core.types import (
     HealthStatus,
     OperatorRewards,
     StrikeSummary,
+    WithdrawalEvent,
 )
 from ..data.beacon import (
     BeaconDataProvider,
@@ -39,7 +40,7 @@ class OperatorService:
         self.strikes = StrikesProvider(rpc_url)
 
     async def get_operator_by_address(
-        self, address: str, include_validators: bool = False, include_history: bool = False
+        self, address: str, include_validators: bool = False, include_history: bool = False, include_withdrawals: bool = False
     ) -> OperatorRewards | None:
         """
         Main entry point: get complete rewards data for an address.
@@ -50,10 +51,10 @@ class OperatorService:
         if operator_id is None:
             return None
 
-        return await self.get_operator_by_id(operator_id, include_validators, include_history)
+        return await self.get_operator_by_id(operator_id, include_validators, include_history, include_withdrawals)
 
     async def get_operator_by_id(
-        self, operator_id: int, include_validators: bool = False, include_history: bool = False
+        self, operator_id: int, include_validators: bool = False, include_history: bool = False, include_withdrawals: bool = False
     ) -> OperatorRewards | None:
         """Get complete rewards data for an operator ID."""
         from web3.exceptions import ContractLogicError
@@ -95,6 +96,7 @@ class OperatorService:
         apy_metrics: APYMetrics | None = None
         active_since = None
         health_status: HealthStatus | None = None
+        withdrawals: list[WithdrawalEvent] | None = None
 
         if include_validators and operator.total_deposited_keys > 0:
             # Get validator pubkeys
@@ -122,6 +124,10 @@ class OperatorService:
                 validator_details=validator_details,
             )
 
+        # Step 11: Fetch withdrawal history if requested
+        if include_withdrawals:
+            withdrawals = await self.get_withdrawal_history(operator_id)
+
         return OperatorRewards(
             node_operator_id=operator_id,
             manager_address=operator.manager_address,
@@ -145,6 +151,7 @@ class OperatorService:
             apy=apy_metrics,
             active_since=active_since,
             health=health_status,
+            withdrawals=withdrawals,
         )
 
     async def get_all_operators_with_rewards(self) -> list[int]:
@@ -194,22 +201,19 @@ class OperatorService:
                     )
 
                     if frames:
-                        # Calculate APY for 28-day and lifetime periods
-                        apy_results = self.ipfs_logs.calculate_historical_apy(
-                            frames=frames,
-                            bond_eth=bond_eth,
-                            periods=[28, None],  # 28-day and lifetime
+                        # Convert all frame shares to ETH values
+                        # IPFS logs store distributed_rewards in stETH shares, not ETH
+                        # We need to convert shares to ETH for accurate display and APY calculation
+                        total_shares = sum(f.distributed_rewards for f in frames)
+                        lifetime_distribution_eth = float(
+                            await self.onchain.shares_to_eth(total_shares)
                         )
-                        historical_reward_apy_28d = apy_results.get("28d")
-                        historical_reward_apy_ltd = apy_results.get("ltd")
-
-                        # Calculate lifetime total rewards (sum of all frames)
-                        total_rewards_wei = sum(f.distributed_rewards for f in frames)
-                        lifetime_distribution_eth = float(Decimal(total_rewards_wei) / Decimal(10**18))
 
                         # Extract current frame data (most recent)
                         current_frame = frames[-1]
-                        current_eth = Decimal(current_frame.distributed_rewards) / Decimal(10**18)
+                        current_eth = await self.onchain.shares_to_eth(
+                            current_frame.distributed_rewards
+                        )
                         current_days = self.ipfs_logs.calculate_frame_duration_days(current_frame)
                         current_distribution_eth = float(current_eth)
                         if current_days > 0:
@@ -220,12 +224,31 @@ class OperatorService:
                         # Extract previous frame data (second-to-last)
                         if len(frames) >= 2:
                             previous_frame = frames[-2]
-                            prev_eth = Decimal(previous_frame.distributed_rewards) / Decimal(10**18)
+                            prev_eth = await self.onchain.shares_to_eth(
+                                previous_frame.distributed_rewards
+                            )
                             prev_days = self.ipfs_logs.calculate_frame_duration_days(previous_frame)
                             previous_distribution_eth = float(prev_eth)
                             if prev_days > 0:
                                 previous_distribution_apy = round(
                                     float(prev_eth / bond_eth) * (365.0 / prev_days) * 100, 2
+                                )
+
+                        # Calculate APY using ETH values (now that we have them)
+                        # Calculate 28-day APY (current frame)
+                        if current_distribution_apy is not None:
+                            historical_reward_apy_28d = current_distribution_apy
+                        # Calculate lifetime APY
+                        if lifetime_distribution_eth > 0:
+                            total_days = sum(
+                                self.ipfs_logs.calculate_frame_duration_days(f) for f in frames
+                            )
+                            if total_days > 0:
+                                historical_reward_apy_ltd = round(
+                                    (lifetime_distribution_eth / float(bond_eth))
+                                    * (365.0 / total_days)
+                                    * 100,
+                                    2,
                                 )
 
                         # Estimate next distribution date (~28 days after current frame ends)
@@ -266,11 +289,62 @@ class OperatorService:
         if previous_distribution_apy is not None and bond_apy is not None:
             previous_net_apy = round(previous_distribution_apy + bond_apy, 2)
 
-        # 4. Build frame history if requested
+        # 4. Calculate bond stETH earnings (from stETH rebasing)
+        # Formula: bond_eth * (bond_apy / 100) * (duration_days / 365)
+        previous_bond_eth = None
+        current_bond_eth = None
+        lifetime_bond_eth = None
+        previous_net_total_eth = None
+        current_net_total_eth = None
+        lifetime_net_total_eth = None
+
+        if bond_apy is not None and bond_eth > 0:
+            # Previous frame bond earnings
+            if frames and len(frames) >= 2:
+                prev_days = self.ipfs_logs.calculate_frame_duration_days(frames[-2])
+                if prev_days > 0:
+                    previous_bond_eth = round(
+                        float(bond_eth) * (bond_apy / 100) * (prev_days / 365), 6
+                    )
+
+            # Current frame bond earnings
+            if frames:
+                curr_days = self.ipfs_logs.calculate_frame_duration_days(frames[-1])
+                if curr_days > 0:
+                    current_bond_eth = round(
+                        float(bond_eth) * (bond_apy / 100) * (curr_days / 365), 6
+                    )
+
+            # Lifetime bond earnings (sum of all frame durations)
+            if frames:
+                total_days = sum(
+                    self.ipfs_logs.calculate_frame_duration_days(f) for f in frames
+                )
+                if total_days > 0:
+                    lifetime_bond_eth = round(
+                        float(bond_eth) * (bond_apy / 100) * (total_days / 365), 6
+                    )
+
+        # 5. Calculate net totals (Rewards + Bond)
+        if previous_distribution_eth is not None or previous_bond_eth is not None:
+            previous_net_total_eth = round(
+                (previous_distribution_eth or 0) + (previous_bond_eth or 0), 6
+            )
+        if current_distribution_eth is not None or current_bond_eth is not None:
+            current_net_total_eth = round(
+                (current_distribution_eth or 0) + (current_bond_eth or 0), 6
+            )
+        if lifetime_distribution_eth is not None or lifetime_bond_eth is not None:
+            lifetime_net_total_eth = round(
+                (lifetime_distribution_eth or 0) + (lifetime_bond_eth or 0), 6
+            )
+
+        # 6. Build frame history if requested
         if include_history and frames:
             frame_list = []
             for i, f in enumerate(frames):
-                f_eth = Decimal(f.distributed_rewards) / Decimal(10**18)
+                # Convert shares to ETH (not just dividing by 10^18)
+                f_eth = await self.onchain.shares_to_eth(f.distributed_rewards)
                 f_days = self.ipfs_logs.calculate_frame_duration_days(f)
                 f_apy = None
                 if f_days > 0 and bond_eth > 0:
@@ -303,6 +377,12 @@ class OperatorService:
             net_apy_28d=net_apy_28d,
             net_apy_ltd=net_apy_ltd,
             frames=frame_list,
+            previous_bond_eth=previous_bond_eth,
+            current_bond_eth=current_bond_eth,
+            lifetime_bond_eth=lifetime_bond_eth,
+            previous_net_total_eth=previous_net_total_eth,
+            current_net_total_eth=current_net_total_eth,
+            lifetime_net_total_eth=lifetime_net_total_eth,
         )
 
     async def calculate_health_status(
@@ -415,3 +495,24 @@ class OperatorService:
             return get_earliest_activation(validators)
         except Exception:
             return None
+
+    async def get_withdrawal_history(self, operator_id: int) -> list[WithdrawalEvent]:
+        """Get withdrawal/claim history for an operator.
+
+        Returns list of WithdrawalEvent objects representing when rewards were claimed.
+        """
+        try:
+            operator = await self.onchain.get_node_operator(operator_id)
+            events = await self.onchain.get_withdrawal_history(operator.reward_address)
+            return [
+                WithdrawalEvent(
+                    block_number=e["block_number"],
+                    timestamp=e["timestamp"],
+                    shares=e["shares"],
+                    eth_value=e["eth_value"],
+                    tx_hash=e["tx_hash"],
+                )
+                for e in events
+            ]
+        except Exception:
+            return []
