@@ -11,6 +11,7 @@ router = APIRouter()
 async def get_operator(
     identifier: str,
     detailed: bool = Query(False, description="Include validator status from beacon chain"),
+    history: bool = Query(False, description="Include all historical distribution frames"),
 ):
     """
     Get operator data by address or ID.
@@ -18,6 +19,7 @@ async def get_operator(
     - If identifier is numeric, treat as operator ID
     - If identifier starts with 0x, treat as Ethereum address
     - Add ?detailed=true to include validator status breakdown
+    - Add ?history=true to include all historical distribution frames
     """
     service = OperatorService()
 
@@ -26,9 +28,9 @@ async def get_operator(
         operator_id = int(identifier)
         if operator_id < 0 or operator_id > 1_000_000:
             raise HTTPException(status_code=400, detail="Invalid operator ID")
-        rewards = await service.get_operator_by_id(operator_id, detailed)
+        rewards = await service.get_operator_by_id(operator_id, detailed or history, history)
     elif identifier.startswith("0x"):
-        rewards = await service.get_operator_by_address(identifier, detailed)
+        rewards = await service.get_operator_by_address(identifier, detailed or history, history)
     else:
         raise HTTPException(status_code=400, detail="Invalid identifier format")
 
@@ -80,12 +82,34 @@ async def get_operator(
     # Add APY metrics if available
     if rewards.apy:
         result["apy"] = {
+            "previous_distribution_eth": rewards.apy.previous_distribution_eth,
+            "previous_distribution_apy": rewards.apy.previous_distribution_apy,
+            "previous_net_apy": rewards.apy.previous_net_apy,
+            "current_distribution_eth": rewards.apy.current_distribution_eth,
+            "current_distribution_apy": rewards.apy.current_distribution_apy,
+            "lifetime_distribution_eth": rewards.apy.lifetime_distribution_eth,
+            "next_distribution_date": rewards.apy.next_distribution_date,
+            "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
             "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
             "historical_reward_apy_ltd": rewards.apy.historical_reward_apy_ltd,
             "bond_apy": rewards.apy.bond_apy,
             "net_apy_28d": rewards.apy.net_apy_28d,
             "net_apy_ltd": rewards.apy.net_apy_ltd,
         }
+        # Add frames if available (from history=true)
+        if rewards.apy.frames:
+            result["apy"]["frames"] = [
+                {
+                    "frame_number": f.frame_number,
+                    "start_date": f.start_date,
+                    "end_date": f.end_date,
+                    "rewards_eth": f.rewards_eth,
+                    "rewards_shares": f.rewards_shares,
+                    "duration_days": f.duration_days,
+                    "apy": f.apy,
+                }
+                for f in rewards.apy.frames
+            ]
 
     # Add active_since if available
     if rewards.active_since:
