@@ -25,7 +25,7 @@ def run_async(coro):
     return asyncio.run(coro)
 
 
-def format_as_api_json(rewards: OperatorRewards, include_validators: bool = False) -> dict:
+def format_as_api_json(rewards: OperatorRewards, include_validators: bool = False, include_withdrawals: bool = False) -> dict:
     """Format rewards data in the same structure as the API endpoint."""
     result = {
         "operator_id": rewards.node_operator_id,
@@ -122,6 +122,19 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
             "has_issues": rewards.health.has_issues,
         }
 
+    # Add withdrawal history if requested
+    if include_withdrawals and rewards.withdrawals:
+        result["withdrawals"] = [
+            {
+                "block_number": w.block_number,
+                "timestamp": w.timestamp,
+                "shares": w.shares,
+                "eth_value": w.eth_value,
+                "tx_hash": w.tx_hash,
+            }
+            for w in rewards.withdrawals
+        ]
+
     return result
 
 
@@ -199,7 +212,7 @@ def rewards(
 
     # JSON output mode
     if output_json:
-        print(json.dumps(format_as_api_json(rewards, detailed), indent=2))
+        print(json.dumps(format_as_api_json(rewards, detailed, withdrawals), indent=2))
         return
 
     # Header panel
