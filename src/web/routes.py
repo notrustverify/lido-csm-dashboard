@@ -12,6 +12,7 @@ async def get_operator(
     identifier: str,
     detailed: bool = Query(False, description="Include validator status from beacon chain"),
     history: bool = Query(False, description="Include all historical distribution frames"),
+    withdrawals: bool = Query(False, description="Include withdrawal/claim history"),
 ):
     """
     Get operator data by address or ID.
@@ -20,6 +21,7 @@ async def get_operator(
     - If identifier starts with 0x, treat as Ethereum address
     - Add ?detailed=true to include validator status breakdown
     - Add ?history=true to include all historical distribution frames
+    - Add ?withdrawals=true to include withdrawal/claim history
     """
     service = OperatorService()
 
@@ -28,9 +30,9 @@ async def get_operator(
         operator_id = int(identifier)
         if operator_id < 0 or operator_id > 1_000_000:
             raise HTTPException(status_code=400, detail="Invalid operator ID")
-        rewards = await service.get_operator_by_id(operator_id, detailed or history, history)
+        rewards = await service.get_operator_by_id(operator_id, detailed or history, history, withdrawals)
     elif identifier.startswith("0x"):
-        rewards = await service.get_operator_by_address(identifier, detailed or history, history)
+        rewards = await service.get_operator_by_address(identifier, detailed or history, history, withdrawals)
     else:
         raise HTTPException(status_code=400, detail="Invalid identifier format")
 
@@ -81,13 +83,22 @@ async def get_operator(
 
     # Add APY metrics if available
     if rewards.apy:
+        # Use actual excess bond for lifetime values (estimates for previous/current)
+        lifetime_bond = float(rewards.excess_bond_eth)
+        lifetime_net_total = (rewards.apy.lifetime_distribution_eth or 0) + lifetime_bond
         result["apy"] = {
             "previous_distribution_eth": rewards.apy.previous_distribution_eth,
             "previous_distribution_apy": rewards.apy.previous_distribution_apy,
             "previous_net_apy": rewards.apy.previous_net_apy,
+            "previous_bond_eth": rewards.apy.previous_bond_eth,
+            "previous_net_total_eth": rewards.apy.previous_net_total_eth,
             "current_distribution_eth": rewards.apy.current_distribution_eth,
             "current_distribution_apy": rewards.apy.current_distribution_apy,
+            "current_bond_eth": rewards.apy.current_bond_eth,
+            "current_net_total_eth": rewards.apy.current_net_total_eth,
             "lifetime_distribution_eth": rewards.apy.lifetime_distribution_eth,
+            "lifetime_bond_eth": lifetime_bond,  # Actual excess bond, not estimate
+            "lifetime_net_total_eth": lifetime_net_total,  # Matches Total Claimable
             "next_distribution_date": rewards.apy.next_distribution_date,
             "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
             "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
@@ -110,6 +121,19 @@ async def get_operator(
                 }
                 for f in rewards.apy.frames
             ]
+
+    # Add withdrawal history if withdrawals=true (already fetched during data gathering)
+    if withdrawals and rewards.withdrawals:
+        result["withdrawals"] = [
+            {
+                "block_number": w.block_number,
+                "timestamp": w.timestamp,
+                "shares": w.shares,
+                "eth_value": w.eth_value,
+                "tx_hash": w.tx_hash,
+            }
+            for w in rewards.withdrawals
+        ]
 
     # Add active_since if available
     if rewards.active_since:
