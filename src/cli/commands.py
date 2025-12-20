@@ -68,9 +68,15 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
             "previous_distribution_eth": rewards.apy.previous_distribution_eth,
             "previous_distribution_apy": rewards.apy.previous_distribution_apy,
             "previous_net_apy": rewards.apy.previous_net_apy,
+            "previous_bond_eth": rewards.apy.previous_bond_eth,
+            "previous_net_total_eth": rewards.apy.previous_net_total_eth,
             "current_distribution_eth": rewards.apy.current_distribution_eth,
             "current_distribution_apy": rewards.apy.current_distribution_apy,
+            "current_bond_eth": rewards.apy.current_bond_eth,
+            "current_net_total_eth": rewards.apy.current_net_total_eth,
             "lifetime_distribution_eth": rewards.apy.lifetime_distribution_eth,
+            "lifetime_bond_eth": rewards.apy.lifetime_bond_eth,
+            "lifetime_net_total_eth": rewards.apy.lifetime_net_total_eth,
             "next_distribution_date": rewards.apy.next_distribution_date,
             "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
             "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
@@ -140,6 +146,9 @@ def rewards(
     history: bool = typer.Option(
         False, "--history", "-H", help="Show all historical distribution frames"
     ),
+    withdrawals: bool = typer.Option(
+        False, "--withdrawals", "-w", help="Include withdrawal/claim history"
+    ),
 ):
     """
     Check CSM operator rewards and earnings.
@@ -150,6 +159,7 @@ def rewards(
         csm rewards 0xYourAddress --json
         csm rewards 42 --detailed
         csm rewards 42 --history
+        csm rewards 42 --withdrawals
     """
     if address is None and operator_id is None:
         console.print("[red]Error: Must provide either ADDRESS or --id[/red]")
@@ -165,20 +175,20 @@ def rewards(
     if not output_json:
         console.print()
         status_msg = "[bold blue]Fetching operator data..."
-        if detailed or history:
+        if detailed or history or withdrawals:
             status_msg = "[bold blue]Fetching operator data and validator status..."
         with console.status(status_msg):
             if operator_id is not None:
-                rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history))
+                rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history, withdrawals))
             else:
                 console.print(f"[dim]Looking up operator for address: {address}[/dim]")
-                rewards = run_async(service.get_operator_by_address(address, detailed or history, history))
+                rewards = run_async(service.get_operator_by_address(address, detailed or history, history, withdrawals))
     else:
         # JSON mode - no status output
         if operator_id is not None:
-            rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history))
+            rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history, withdrawals))
         else:
-            rewards = run_async(service.get_operator_by_address(address, detailed or history, history))
+            rewards = run_async(service.get_operator_by_address(address, detailed or history, history, withdrawals))
 
     if rewards is None:
         if output_json:
@@ -412,14 +422,30 @@ def rewards(
         )
         apy_table.add_row("─" * 15, "─" * 10, "─" * 10, "─" * 10)
         apy_table.add_row(
-            "Rewards (ETH)",
+            "Rewards (stETH)",
             fmt_eth(rewards.apy.previous_distribution_eth),
             fmt_eth(rewards.apy.current_distribution_eth),
             fmt_eth(rewards.apy.lifetime_distribution_eth),
         )
+        # Use actual excess bond for Lifetime column (estimates for Previous/Current)
+        lifetime_bond = float(rewards.excess_bond_eth)
+        apy_table.add_row(
+            "Bond (stETH)*",
+            fmt_eth(rewards.apy.previous_bond_eth),
+            fmt_eth(rewards.apy.current_bond_eth),
+            fmt_eth(lifetime_bond),
+        )
+        # Calculate actual Net Total for Lifetime column
+        lifetime_net_total = (rewards.apy.lifetime_distribution_eth or 0) + lifetime_bond
+        apy_table.add_row(
+            "[bold]Net Total (stETH)[/bold]",
+            f"[bold]{fmt_eth(rewards.apy.previous_net_total_eth)}[/bold]",
+            f"[bold]{fmt_eth(rewards.apy.current_net_total_eth)}[/bold]",
+            f"[bold]{fmt_eth(lifetime_net_total)}[/bold]",
+        )
 
         console.print(apy_table)
-        console.print("[dim]*Bond APY uses current stETH rate (historical rate not tracked)[/dim]")
+        console.print("[dim]*Previous/Current Bond are estimates; Lifetime uses actual Excess Bond[/dim]")
 
         # Show next distribution estimate
         if rewards.apy.next_distribution_date:
@@ -446,18 +472,16 @@ def rewards(
             history_table.add_column("Duration", style="dim", justify="right")
             history_table.add_column("APY", style="green", justify="right")
 
-            # Display newest first (reverse order), with row numbers counting down
-            total_frames = len(rewards.apy.frames)
-            for idx, frame in enumerate(reversed(rewards.apy.frames)):
+            # Display oldest first (chronological order)
+            for frame in rewards.apy.frames:
                 try:
                     end_dt = datetime.fromisoformat(frame.end_date)
                     dist_date = end_dt.strftime("%b %d, %Y")
                 except (ValueError, TypeError):
                     dist_date = frame.end_date
 
-                row_num = total_frames - idx  # Count down: newest is highest number
                 history_table.add_row(
-                    str(row_num),
+                    str(frame.frame_number),
                     dist_date,
                     f"{frame.rewards_eth:.4f}",
                     f"{frame.duration_days:.1f} days",
@@ -465,6 +489,32 @@ def rewards(
                 )
 
             console.print(history_table)
+            console.print()
+
+        # Show withdrawal history if --withdrawals flag is used
+        if withdrawals and rewards.withdrawals:
+            from datetime import datetime
+            withdrawal_table = Table(title="Withdrawal History")
+            withdrawal_table.add_column("#", style="cyan", justify="right")
+            withdrawal_table.add_column("Date", style="white")
+            withdrawal_table.add_column("Amount (stETH)", style="green", justify="right")
+            withdrawal_table.add_column("Tx Hash", style="dim")
+
+            for i, w in enumerate(rewards.withdrawals, 1):
+                try:
+                    w_dt = datetime.fromisoformat(w.timestamp)
+                    w_date = w_dt.strftime("%b %d, %Y")
+                except (ValueError, TypeError):
+                    w_date = w.timestamp[:10] if w.timestamp else "--"
+
+                withdrawal_table.add_row(
+                    str(i),
+                    w_date,
+                    f"{w.eth_value:.4f}",
+                    f"{w.tx_hash[:10]}..." if w.tx_hash else "--",
+                )
+
+            console.print(withdrawal_table)
             console.print()
 
 
