@@ -48,6 +48,18 @@ class RewardsInfo(BaseModel):
     proof: list[str]
 
 
+class DistributionFrame(BaseModel):
+    """Single distribution frame data."""
+
+    frame_number: int
+    start_date: str  # ISO format
+    end_date: str
+    rewards_eth: float
+    rewards_shares: int
+    duration_days: float
+    apy: float | None = None  # Annualized for this frame
+
+
 class APYMetrics(BaseModel):
     """APY calculations for an operator.
 
@@ -59,16 +71,35 @@ class APYMetrics(BaseModel):
     which is more accurate than calculating from unclaimed amounts.
     """
 
+    # Previous distribution frame metrics
+    previous_distribution_eth: float | None = None
+    previous_distribution_apy: float | None = None
+    previous_net_apy: float | None = None  # previous_reward_apy + current_bond_apy
+
+    # Current distribution frame metrics
+    current_distribution_eth: float | None = None
+    current_distribution_apy: float | None = None
+
+    # Next distribution estimates
+    next_distribution_date: str | None = None  # ISO format
+    next_distribution_est_eth: float | None = None
+
+    # Lifetime totals
+    lifetime_distribution_eth: float | None = None  # Sum of all frame rewards
+
     # Historical Reward APY (from IPFS distribution logs) - most accurate
-    historical_reward_apy_28d: float | None = None  # Last ~28 days (1 frame)
+    historical_reward_apy_28d: float | None = None  # Kept for backwards compat
     historical_reward_apy_ltd: float | None = None  # Lifetime
 
     # Bond APY (stETH rebase appreciation)
     bond_apy: float | None = None
 
     # Net APY (Historical Reward APY + Bond APY)
-    net_apy_28d: float | None = None
+    net_apy_28d: float | None = None  # Kept for backwards compat
     net_apy_ltd: float | None = None
+
+    # Full frame history (only populated with --history flag)
+    frames: list[DistributionFrame] | None = None
 
     # Legacy fields (deprecated, kept for backwards compatibility)
     reward_apy_7d: float | None = None
