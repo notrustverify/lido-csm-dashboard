@@ -2,7 +2,14 @@
 
 from decimal import Decimal
 
-from ..core.types import APYMetrics, BondSummary, HealthStatus, OperatorRewards, StrikeSummary
+from ..core.types import (
+    APYMetrics,
+    BondSummary,
+    DistributionFrame,
+    HealthStatus,
+    OperatorRewards,
+    StrikeSummary,
+)
 from ..data.beacon import (
     BeaconDataProvider,
     ValidatorInfo,
@@ -13,7 +20,7 @@ from ..data.beacon import (
     epoch_to_datetime,
     get_earliest_activation,
 )
-from ..data.ipfs_logs import IPFSLogProvider
+from ..data.ipfs_logs import IPFSLogProvider, epoch_to_datetime as epoch_to_dt
 from ..data.lido_api import LidoAPIProvider
 from ..data.onchain import OnChainDataProvider
 from ..data.rewards_tree import RewardsTreeProvider
@@ -32,7 +39,7 @@ class OperatorService:
         self.strikes = StrikesProvider(rpc_url)
 
     async def get_operator_by_address(
-        self, address: str, include_validators: bool = False
+        self, address: str, include_validators: bool = False, include_history: bool = False
     ) -> OperatorRewards | None:
         """
         Main entry point: get complete rewards data for an address.
@@ -43,10 +50,10 @@ class OperatorService:
         if operator_id is None:
             return None
 
-        return await self.get_operator_by_id(operator_id, include_validators)
+        return await self.get_operator_by_id(operator_id, include_validators, include_history)
 
     async def get_operator_by_id(
-        self, operator_id: int, include_validators: bool = False
+        self, operator_id: int, include_validators: bool = False, include_history: bool = False
     ) -> OperatorRewards | None:
         """Get complete rewards data for an operator ID."""
         from web3.exceptions import ContractLogicError
@@ -104,6 +111,7 @@ class OperatorService:
             apy_metrics = await self.calculate_apy_metrics(
                 operator_id=operator_id,
                 bond_eth=bond.current_bond_eth,
+                include_history=include_history,
             )
 
             # Step 10: Calculate health status
@@ -147,15 +155,31 @@ class OperatorService:
         self,
         operator_id: int,
         bond_eth: Decimal,
+        include_history: bool = False,
     ) -> APYMetrics:
         """Calculate APY metrics for an operator using historical IPFS data.
 
         Note: Validator APY (consensus rewards) is NOT calculated because CSM operators
         don't receive those rewards directly - they go to Lido protocol and are
         redistributed via CSM reward distributions (captured in reward_apy).
+
+        Args:
+            operator_id: The operator ID
+            bond_eth: Current bond in ETH
+            include_history: If True, populate the frames list with all historical data
         """
         historical_reward_apy_28d = None
         historical_reward_apy_ltd = None
+        previous_distribution_eth = None
+        previous_distribution_apy = None
+        previous_net_apy = None
+        current_distribution_eth = None
+        current_distribution_apy = None
+        next_distribution_date = None
+        next_distribution_est_eth = None
+        lifetime_distribution_eth = None
+        frame_list: list[DistributionFrame] | None = None
+        frames = []
 
         # 1. Try to get historical APY from IPFS distribution logs
         if bond_eth > 0:
@@ -178,6 +202,42 @@ class OperatorService:
                         )
                         historical_reward_apy_28d = apy_results.get("28d")
                         historical_reward_apy_ltd = apy_results.get("ltd")
+
+                        # Calculate lifetime total rewards (sum of all frames)
+                        total_rewards_wei = sum(f.distributed_rewards for f in frames)
+                        lifetime_distribution_eth = float(Decimal(total_rewards_wei) / Decimal(10**18))
+
+                        # Extract current frame data (most recent)
+                        current_frame = frames[-1]
+                        current_eth = Decimal(current_frame.distributed_rewards) / Decimal(10**18)
+                        current_days = self.ipfs_logs.calculate_frame_duration_days(current_frame)
+                        current_distribution_eth = float(current_eth)
+                        if current_days > 0:
+                            current_distribution_apy = round(
+                                float(current_eth / bond_eth) * (365.0 / current_days) * 100, 2
+                            )
+
+                        # Extract previous frame data (second-to-last)
+                        if len(frames) >= 2:
+                            previous_frame = frames[-2]
+                            prev_eth = Decimal(previous_frame.distributed_rewards) / Decimal(10**18)
+                            prev_days = self.ipfs_logs.calculate_frame_duration_days(previous_frame)
+                            previous_distribution_eth = float(prev_eth)
+                            if prev_days > 0:
+                                previous_distribution_apy = round(
+                                    float(prev_eth / bond_eth) * (365.0 / prev_days) * 100, 2
+                                )
+
+                        # Estimate next distribution date (~28 days after current frame ends)
+                        # Frame duration ≈ 28 days = ~6300 epochs
+                        next_epoch = current_frame.end_epoch + 6300
+                        next_distribution_date = epoch_to_dt(next_epoch).isoformat()
+
+                        # Estimate next distribution ETH based on current daily rate
+                        if current_days > 0:
+                            daily_rate = current_eth / Decimal(current_days)
+                            next_distribution_est_eth = float(daily_rate * Decimal(28))
+
             except Exception:
                 # If historical APY calculation fails, continue without it
                 pass
@@ -186,26 +246,63 @@ class OperatorService:
         steth_data = await self.lido_api.get_steth_apr()
         bond_apy = steth_data.get("apr")
 
-        # 3. Net APY (Historical Reward APY + Bond APY)
+        # 3. Net APY calculations
         net_apy_28d = None
         net_apy_ltd = None
 
+        # Current frame net APY (historical_reward_apy_28d is basically current frame APY)
         if historical_reward_apy_28d is not None and bond_apy is not None:
-            net_apy_28d = historical_reward_apy_28d + bond_apy
+            net_apy_28d = round(historical_reward_apy_28d + bond_apy, 2)
         elif bond_apy is not None:
-            net_apy_28d = bond_apy
+            net_apy_28d = round(bond_apy, 2)
 
+        # Lifetime net APY
         if historical_reward_apy_ltd is not None and bond_apy is not None:
-            net_apy_ltd = historical_reward_apy_ltd + bond_apy
+            net_apy_ltd = round(historical_reward_apy_ltd + bond_apy, 2)
         elif bond_apy is not None:
-            net_apy_ltd = bond_apy
+            net_apy_ltd = round(bond_apy, 2)
+
+        # Previous frame net APY (uses current bond_apy as approximation)
+        if previous_distribution_apy is not None and bond_apy is not None:
+            previous_net_apy = round(previous_distribution_apy + bond_apy, 2)
+
+        # 4. Build frame history if requested
+        if include_history and frames:
+            frame_list = []
+            for i, f in enumerate(frames):
+                f_eth = Decimal(f.distributed_rewards) / Decimal(10**18)
+                f_days = self.ipfs_logs.calculate_frame_duration_days(f)
+                f_apy = None
+                if f_days > 0 and bond_eth > 0:
+                    f_apy = round(float(f_eth / bond_eth) * (365.0 / f_days) * 100, 2)
+
+                frame_list.append(
+                    DistributionFrame(
+                        frame_number=i + 1,
+                        start_date=epoch_to_dt(f.start_epoch).isoformat(),
+                        end_date=epoch_to_dt(f.end_epoch).isoformat(),
+                        rewards_eth=float(f_eth),
+                        rewards_shares=f.distributed_rewards,
+                        duration_days=round(f_days, 1),
+                        apy=f_apy,
+                    )
+                )
 
         return APYMetrics(
+            previous_distribution_eth=previous_distribution_eth,
+            previous_distribution_apy=previous_distribution_apy,
+            previous_net_apy=previous_net_apy,
+            current_distribution_eth=current_distribution_eth,
+            current_distribution_apy=current_distribution_apy,
+            next_distribution_date=next_distribution_date,
+            next_distribution_est_eth=next_distribution_est_eth,
+            lifetime_distribution_eth=lifetime_distribution_eth,
             historical_reward_apy_28d=historical_reward_apy_28d,
             historical_reward_apy_ltd=historical_reward_apy_ltd,
             bond_apy=bond_apy,
             net_apy_28d=net_apy_28d,
             net_apy_ltd=net_apy_ltd,
+            frames=frame_list,
         )
 
     async def calculate_health_status(
