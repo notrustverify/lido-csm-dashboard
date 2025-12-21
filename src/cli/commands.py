@@ -64,19 +64,25 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
 
     # Add APY metrics if available
     if rewards.apy:
+        # Use actual excess bond for lifetime values (matches Web API)
+        lifetime_bond = float(rewards.excess_bond_eth)
+        lifetime_net_total = (rewards.apy.lifetime_distribution_eth or 0) + lifetime_bond
+
         result["apy"] = {
             "previous_distribution_eth": rewards.apy.previous_distribution_eth,
             "previous_distribution_apy": rewards.apy.previous_distribution_apy,
             "previous_net_apy": rewards.apy.previous_net_apy,
             "previous_bond_eth": rewards.apy.previous_bond_eth,
+            "previous_bond_apr": rewards.apy.previous_bond_apr,
             "previous_net_total_eth": rewards.apy.previous_net_total_eth,
             "current_distribution_eth": rewards.apy.current_distribution_eth,
             "current_distribution_apy": rewards.apy.current_distribution_apy,
             "current_bond_eth": rewards.apy.current_bond_eth,
+            "current_bond_apr": rewards.apy.current_bond_apr,
             "current_net_total_eth": rewards.apy.current_net_total_eth,
             "lifetime_distribution_eth": rewards.apy.lifetime_distribution_eth,
-            "lifetime_bond_eth": rewards.apy.lifetime_bond_eth,
-            "lifetime_net_total_eth": rewards.apy.lifetime_net_total_eth,
+            "lifetime_bond_eth": lifetime_bond,  # Actual excess bond, not estimate
+            "lifetime_net_total_eth": lifetime_net_total,  # Matches Total Claimable
             "next_distribution_date": rewards.apy.next_distribution_date,
             "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
             "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
@@ -84,6 +90,7 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
             "bond_apy": rewards.apy.bond_apy,
             "net_apy_28d": rewards.apy.net_apy_28d,
             "net_apy_ltd": rewards.apy.net_apy_ltd,
+            "uses_historical_apr": rewards.apy.uses_historical_apr,
         }
         # Add frames if available (from --history flag)
         if rewards.apy.frames:
@@ -465,9 +472,9 @@ def rewards(
         console.print(apy_table)
         # Show appropriate footer based on whether historical APR was used
         if rewards.apy.uses_historical_apr:
-            console.print("[dim]Previous/Current use historical APR; Lifetime uses actual Excess Bond[/dim]")
+            console.print("[dim]*Bond (stETH) uses current bond amount; Lifetime uses actual Excess Bond[/dim]")
         else:
-            console.print("[dim]*Previous/Current Bond are estimates; Lifetime uses actual Excess Bond[/dim]")
+            console.print("[dim]*Previous/Current are estimates (current APR/bond); Lifetime uses actual Excess Bond[/dim]")
 
         # Show next distribution estimate
         if rewards.apy.next_distribution_date:

@@ -127,6 +127,9 @@ class IPFSLogProvider:
         Extract operator's distributed_rewards for a frame.
 
         Returns rewards in wei (shares), or None if operator not in frame.
+
+        Note: The IPFS log field name changed from "distributed" to "distributed_rewards"
+        around Dec 2025. We check both for backwards compatibility.
         """
         operators = log_data.get("operators", {})
         op_key = str(operator_id)
@@ -134,7 +137,12 @@ class IPFSLogProvider:
         if op_key not in operators:
             return None
 
-        return operators[op_key].get("distributed_rewards", 0)
+        op_data = operators[op_key]
+        # Handle both new and old field names for backwards compatibility
+        rewards = op_data.get("distributed_rewards")
+        if rewards is None:
+            rewards = op_data.get("distributed")  # Fallback to old field name
+        return rewards if rewards is not None else 0
 
     def get_frame_info(self, log_data: dict) -> tuple[int, int]:
         """
