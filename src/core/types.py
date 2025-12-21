@@ -116,6 +116,13 @@ class APYMetrics(BaseModel):
     current_bond_eth: float | None = None
     lifetime_bond_eth: float | None = None
 
+    # Historical APR values used for each frame (from Lido subgraph)
+    previous_bond_apr: float | None = None  # APR used for previous frame
+    current_bond_apr: float | None = None  # APR used for current frame
+
+    # Track whether historical APR was used (vs fallback to current)
+    uses_historical_apr: bool = False
+
     # Net total stETH (Rewards + Bond)
     previous_net_total_eth: float | None = None
     current_net_total_eth: float | None = None
