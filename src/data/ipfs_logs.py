@@ -34,6 +34,7 @@ class FrameData:
     log_cid: str
     block_number: int
     distributed_rewards: int  # For specific operator, in wei
+    validator_count: int  # Number of validators for operator in this frame
 
 
 class IPFSLogProvider:
@@ -41,7 +42,6 @@ class IPFSLogProvider:
 
     # IPFS gateways to try in order
     GATEWAYS = [
-        "https://dweb.link/ipfs/",
         "https://ipfs.io/ipfs/",
         "https://cloudflare-ipfs.com/ipfs/",
     ]
@@ -155,6 +155,22 @@ class IPFSLogProvider:
             return (0, 0)
         return (frame[0], frame[1])
 
+    def get_operator_validator_count(self, log_data: dict, operator_id: int) -> int:
+        """
+        Get the number of validators for an operator in a frame.
+
+        Returns the count of validators, or 0 if operator not in frame.
+        """
+        operators = log_data.get("operators", {})
+        op_key = str(operator_id)
+
+        if op_key not in operators:
+            return 0
+
+        op_data = operators[op_key]
+        validators = op_data.get("validators", {})
+        return len(validators)
+
     async def get_operator_history(
         self,
         operator_id: int,
@@ -186,6 +202,7 @@ class IPFSLogProvider:
                 continue
 
             start_epoch, end_epoch = self.get_frame_info(log_data)
+            validator_count = self.get_operator_validator_count(log_data, operator_id)
 
             frames.append(
                 FrameData(
@@ -194,6 +211,7 @@ class IPFSLogProvider:
                     log_cid=cid,
                     block_number=block,
                     distributed_rewards=rewards,
+                    validator_count=validator_count,
                 )
             )
 
