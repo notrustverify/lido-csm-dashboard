@@ -21,7 +21,7 @@ from ..data.beacon import (
     epoch_to_datetime,
     get_earliest_activation,
 )
-from ..data.ipfs_logs import IPFSLogProvider, epoch_to_datetime as epoch_to_dt
+from ..data.ipfs_logs import BEACON_GENESIS, IPFSLogProvider, epoch_to_datetime as epoch_to_dt
 from ..data.lido_api import LidoAPIProvider
 from ..data.onchain import OnChainDataProvider
 from ..data.rewards_tree import RewardsTreeProvider
@@ -66,30 +66,34 @@ class OperatorService:
             # Operator ID doesn't exist on-chain
             return None
 
-        # Step 2: Get bond summary
+        # Step 2: Get bond curve and operator type
+        curve_id = await self.onchain.get_bond_curve_id(operator_id)
+        operator_type = self.onchain.get_operator_type_name(curve_id)
+
+        # Step 3: Get bond summary
         bond = await self.onchain.get_bond_summary(operator_id)
 
-        # Step 3: Get rewards from merkle tree
+        # Step 4: Get rewards from merkle tree
         rewards_info = await self.rewards_tree.get_operator_rewards(operator_id)
 
-        # Step 4: Get already distributed (claimed) shares
+        # Step 5: Get already distributed (claimed) shares
         distributed = await self.onchain.get_distributed_shares(operator_id)
 
-        # Step 5: Calculate unclaimed
+        # Step 6: Calculate unclaimed
         cumulative_shares = (
             rewards_info.cumulative_fee_shares if rewards_info else 0
         )
         unclaimed_shares = max(0, cumulative_shares - distributed)
 
-        # Step 6: Convert shares to ETH
+        # Step 7: Convert shares to ETH
         unclaimed_eth = await self.onchain.shares_to_eth(unclaimed_shares)
         cumulative_eth = await self.onchain.shares_to_eth(cumulative_shares)
         distributed_eth = await self.onchain.shares_to_eth(distributed)
 
-        # Step 7: Calculate total claimable
+        # Step 8: Calculate total claimable
         total_claimable = bond.excess_bond_eth + unclaimed_eth
 
-        # Step 8: Get validator details if requested
+        # Step 9: Get validator details if requested
         validator_details: list[ValidatorInfo] = []
         validators_by_status: dict[str, int] | None = None
         avg_effectiveness: float | None = None
@@ -109,14 +113,15 @@ class OperatorService:
             avg_effectiveness = calculate_avg_effectiveness(validator_details)
             active_since = get_earliest_activation(validator_details)
 
-            # Step 9: Calculate APY metrics (using historical IPFS data)
+            # Step 10: Calculate APY metrics (using historical IPFS data)
             apy_metrics = await self.calculate_apy_metrics(
                 operator_id=operator_id,
                 bond_eth=bond.current_bond_eth,
+                curve_id=curve_id,
                 include_history=include_history,
             )
 
-            # Step 10: Calculate health status
+            # Step 11: Calculate health status
             health_status = await self.calculate_health_status(
                 operator_id=operator_id,
                 bond=bond,
@@ -124,7 +129,7 @@ class OperatorService:
                 validator_details=validator_details,
             )
 
-        # Step 11: Fetch withdrawal history if requested
+        # Step 12: Fetch withdrawal history if requested
         if include_withdrawals:
             withdrawals = await self.get_withdrawal_history(operator_id)
 
@@ -132,6 +137,8 @@ class OperatorService:
             node_operator_id=operator_id,
             manager_address=operator.manager_address,
             reward_address=operator.reward_address,
+            curve_id=curve_id,
+            operator_type=operator_type,
             current_bond_eth=bond.current_bond_eth,
             required_bond_eth=bond.required_bond_eth,
             excess_bond_eth=bond.excess_bond_eth,
@@ -162,6 +169,7 @@ class OperatorService:
         self,
         operator_id: int,
         bond_eth: Decimal,
+        curve_id: int = 0,
         include_history: bool = False,
     ) -> APYMetrics:
         """Calculate APY metrics for an operator using historical IPFS data.
@@ -173,7 +181,9 @@ class OperatorService:
         Args:
             operator_id: The operator ID
             bond_eth: Current bond in ETH
+            curve_id: Bond curve (0=Permissionless, 1=ICS/Legacy EA)
             include_history: If True, populate the frames list with all historical data
+                            and calculate accurate per-frame lifetime APY
         """
         historical_reward_apy_28d = None
         historical_reward_apy_ltd = None
@@ -185,11 +195,17 @@ class OperatorService:
         next_distribution_date = None
         next_distribution_est_eth = None
         lifetime_distribution_eth = None
+        # Accurate lifetime APY (calculated with per-frame bond when include_history=True)
+        lifetime_reward_apy = None
+        lifetime_bond_apy = None
+        lifetime_net_apy = None
         frame_list: list[DistributionFrame] | None = None
         frames = []
 
         # 1. Try to get historical APY from IPFS distribution logs
-        if bond_eth > 0:
+        # Minimum bond threshold: 0.01 ETH (dust amounts produce nonsensical APY)
+        MIN_BOND_ETH = Decimal("0.01")
+        if bond_eth >= MIN_BOND_ETH:
             try:
                 # Query historical log CIDs from contract events
                 log_history = await self.onchain.get_distribution_log_history()
@@ -216,7 +232,7 @@ class OperatorService:
                         )
                         current_days = self.ipfs_logs.calculate_frame_duration_days(current_frame)
                         current_distribution_eth = float(current_eth)
-                        if current_days > 0:
+                        if current_days > 0 and bond_eth >= MIN_BOND_ETH:
                             current_distribution_apy = round(
                                 float(current_eth / bond_eth) * (365.0 / current_days) * 100, 2
                             )
@@ -229,7 +245,7 @@ class OperatorService:
                             )
                             prev_days = self.ipfs_logs.calculate_frame_duration_days(previous_frame)
                             previous_distribution_eth = float(prev_eth)
-                            if prev_days > 0:
+                            if prev_days > 0 and bond_eth >= MIN_BOND_ETH:
                                 previous_distribution_apy = round(
                                     float(prev_eth / bond_eth) * (365.0 / prev_days) * 100, 2
                                 )
@@ -238,18 +254,11 @@ class OperatorService:
                         # Calculate 28-day APY (current frame)
                         if current_distribution_apy is not None:
                             historical_reward_apy_28d = current_distribution_apy
-                        # Calculate lifetime APY
-                        if lifetime_distribution_eth > 0:
-                            total_days = sum(
-                                self.ipfs_logs.calculate_frame_duration_days(f) for f in frames
-                            )
-                            if total_days > 0:
-                                historical_reward_apy_ltd = round(
-                                    (lifetime_distribution_eth / float(bond_eth))
-                                    * (365.0 / total_days)
-                                    * 100,
-                                    2,
-                                )
+                        # NOTE: Lifetime APY is intentionally NOT calculated because:
+                        # - It uses current bond as denominator for all historical rewards
+                        # - This produces misleading values for operators who grew over time
+                        # - We keep lifetime_distribution_eth (ETH totals are accurate)
+                        # historical_reward_apy_ltd remains None
 
                         # Estimate next distribution date (~28 days after current frame ends)
                         # Frame duration ≈ 28 days = ~6300 epochs
@@ -279,19 +288,17 @@ class OperatorService:
         elif bond_apy is not None:
             net_apy_28d = round(bond_apy, 2)
 
-        # Lifetime net APY
-        if historical_reward_apy_ltd is not None and bond_apy is not None:
-            net_apy_ltd = round(historical_reward_apy_ltd + bond_apy, 2)
-        elif bond_apy is not None:
-            net_apy_ltd = round(bond_apy, 2)
+        # Lifetime net APY - intentionally NOT calculated
+        # (same reason as historical_reward_apy_ltd - can't accurately calculate without historical bond)
+        # net_apy_ltd remains None
 
-        # Previous frame net APY (uses current bond_apy as approximation)
-        if previous_distribution_apy is not None and bond_apy is not None:
-            previous_net_apy = round(previous_distribution_apy + bond_apy, 2)
+        # Previous frame net APY calculation is moved after we know previous_bond_apy
+        # (calculated in section 4 below)
 
         # 4. Calculate bond stETH earnings (from stETH rebasing)
         # Formula: bond_eth * (apr / 100) * (duration_days / 365)
         # Uses historical APR from Lido subgraph when available
+        # When include_history=True and we have per-frame validator counts, use accurate bond
         previous_bond_eth = None
         current_bond_eth = None
         lifetime_bond_eth = None
@@ -300,36 +307,52 @@ class OperatorService:
         lifetime_net_total_eth = None
         previous_bond_apr = None  # Track which APR was used
         current_bond_apr = None
+        previous_bond_apy = None  # Bond APY for previous frame (for accurate previous_net_apy)
 
         # Fetch historical APR data (returns [] if no API key)
         historical_apr_data = await self.lido_api.get_historical_apr_data()
 
-        if bond_eth > 0:
+        if bond_eth >= MIN_BOND_ETH:
             # Previous frame bond earnings
             if frames and len(frames) >= 2:
                 prev_frame = frames[-2]
                 prev_days = self.ipfs_logs.calculate_frame_duration_days(prev_frame)
                 if prev_days > 0:
-                    # Use historical APR if available, otherwise fall back to current
-                    prev_apr = self.lido_api.get_apr_for_block(
-                        historical_apr_data, prev_frame.block_number
+                    # Use average historical APR for the frame period
+                    prev_start_ts = BEACON_GENESIS + (prev_frame.start_epoch * 384)
+                    prev_end_ts = BEACON_GENESIS + (prev_frame.end_epoch * 384)
+                    prev_apr = self.lido_api.get_average_apr_for_range(
+                        historical_apr_data, prev_start_ts, prev_end_ts
                     )
                     if prev_apr is None:
                         prev_apr = bond_apy
                     if prev_apr is not None:
                         previous_bond_apr = round(prev_apr, 2)
-                        previous_bond_eth = round(
-                            float(bond_eth) * (prev_apr / 100) * (prev_days / 365), 6
-                        )
+                        previous_bond_apy = previous_bond_apr  # Same value, used for net APY
+
+                        # When include_history=True and we have validator count, use per-frame bond
+                        if include_history and prev_frame.validator_count > 0:
+                            prev_bond = self.onchain.calculate_required_bond(
+                                prev_frame.validator_count, curve_id
+                            )
+                            previous_bond_eth = round(
+                                float(prev_bond) * (prev_apr / 100) * (prev_days / 365), 6
+                            )
+                        else:
+                            previous_bond_eth = round(
+                                float(bond_eth) * (prev_apr / 100) * (prev_days / 365), 6
+                            )
 
             # Current frame bond earnings
             if frames:
                 curr_frame = frames[-1]
                 curr_days = self.ipfs_logs.calculate_frame_duration_days(curr_frame)
                 if curr_days > 0:
-                    # Use historical APR if available, otherwise fall back to current
-                    curr_apr = self.lido_api.get_apr_for_block(
-                        historical_apr_data, curr_frame.block_number
+                    # Use average historical APR for the frame period
+                    curr_start_ts = BEACON_GENESIS + (curr_frame.start_epoch * 384)
+                    curr_end_ts = BEACON_GENESIS + (curr_frame.end_epoch * 384)
+                    curr_apr = self.lido_api.get_average_apr_for_range(
+                        historical_apr_data, curr_start_ts, curr_end_ts
                     )
                     if curr_apr is None:
                         curr_apr = bond_apy
@@ -340,20 +363,72 @@ class OperatorService:
                         )
 
             # Lifetime bond earnings (sum of all frame durations with per-frame APR)
+            # When include_history=True, calculate accurate lifetime APY with per-frame bond
             if frames:
                 lifetime_bond_sum = 0.0
+                # For accurate lifetime APY calculation (duration-weighted)
+                frame_reward_apys = []
+                frame_bond_apys = []
+                frame_durations = []
+
                 for f in frames:
                     f_days = self.ipfs_logs.calculate_frame_duration_days(f)
                     if f_days > 0:
-                        f_apr = self.lido_api.get_apr_for_block(
-                            historical_apr_data, f.block_number
+                        # Use average historical APR for each frame period
+                        f_start_ts = BEACON_GENESIS + (f.start_epoch * 384)
+                        f_end_ts = BEACON_GENESIS + (f.end_epoch * 384)
+                        f_apr = self.lido_api.get_average_apr_for_range(
+                            historical_apr_data, f_start_ts, f_end_ts
                         )
                         if f_apr is None:
                             f_apr = bond_apy
+
                         if f_apr is not None:
-                            lifetime_bond_sum += float(bond_eth) * (f_apr / 100) * (f_days / 365)
+                            # When include_history=True and we have validator count, use per-frame bond
+                            if include_history and f.validator_count > 0:
+                                f_bond = self.onchain.calculate_required_bond(
+                                    f.validator_count, curve_id
+                                )
+                                lifetime_bond_sum += float(f_bond) * (f_apr / 100) * (f_days / 365)
+
+                                # Calculate per-frame reward APY for weighted average
+                                f_eth = await self.onchain.shares_to_eth(f.distributed_rewards)
+                                if f_bond > 0:
+                                    f_reward_apy = float(f_eth / f_bond) * (365.0 / f_days) * 100
+                                    frame_reward_apys.append(f_reward_apy)
+                                    frame_bond_apys.append(f_apr)
+                                    frame_durations.append(f_days)
+                            else:
+                                lifetime_bond_sum += float(bond_eth) * (f_apr / 100) * (f_days / 365)
+
                 if lifetime_bond_sum > 0:
                     lifetime_bond_eth = round(lifetime_bond_sum, 6)
+
+                # Calculate duration-weighted lifetime APYs when include_history=True
+                if include_history and frame_durations:
+                    total_duration = sum(frame_durations)
+                    if total_duration > 0:
+                        # Duration-weighted average reward APY
+                        lifetime_reward_apy = round(
+                            sum(apy * dur for apy, dur in zip(frame_reward_apys, frame_durations))
+                            / total_duration,
+                            2
+                        )
+                        # Duration-weighted average bond APY
+                        lifetime_bond_apy = round(
+                            sum(apy * dur for apy, dur in zip(frame_bond_apys, frame_durations))
+                            / total_duration,
+                            2
+                        )
+                        # Net = Reward + Bond
+                        lifetime_net_apy = round(lifetime_reward_apy + lifetime_bond_apy, 2)
+
+        # 4b. Previous frame net APY (now that we have previous_bond_apy)
+        # Uses the actual APR from the previous frame period instead of current bond_apy
+        if previous_distribution_apy is not None:
+            prev_bond_apy_to_use = previous_bond_apy if previous_bond_apy is not None else bond_apy
+            if prev_bond_apy_to_use is not None:
+                previous_net_apy = round(previous_distribution_apy + prev_bond_apy_to_use, 2)
 
         # 5. Calculate net totals (Rewards + Bond)
         if previous_distribution_eth is not None or previous_bond_eth is not None:
@@ -377,7 +452,7 @@ class OperatorService:
                 f_eth = await self.onchain.shares_to_eth(f.distributed_rewards)
                 f_days = self.ipfs_logs.calculate_frame_duration_days(f)
                 f_apy = None
-                if f_days > 0 and bond_eth > 0:
+                if f_days > 0 and bond_eth >= MIN_BOND_ETH:
                     f_apy = round(float(f_eth / bond_eth) * (365.0 / f_days) * 100, 2)
 
                 frame_list.append(
@@ -388,6 +463,7 @@ class OperatorService:
                         rewards_eth=float(f_eth),
                         rewards_shares=f.distributed_rewards,
                         duration_days=round(f_days, 1),
+                        validator_count=f.validator_count,
                         apy=f_apy,
                     )
                 )
@@ -401,6 +477,9 @@ class OperatorService:
             next_distribution_date=next_distribution_date,
             next_distribution_est_eth=next_distribution_est_eth,
             lifetime_distribution_eth=lifetime_distribution_eth,
+            lifetime_reward_apy=lifetime_reward_apy,
+            lifetime_bond_apy=lifetime_bond_apy,
+            lifetime_net_apy=lifetime_net_apy,
             historical_reward_apy_28d=historical_reward_apy_28d,
             historical_reward_apy_ltd=historical_reward_apy_ltd,
             bond_apy=bond_apy,

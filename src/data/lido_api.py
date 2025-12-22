@@ -96,3 +96,45 @@ class LidoAPIProvider:
                 break  # apr_data is sorted ascending
 
         return float(closest["apr"]) if closest else None
+
+    def get_average_apr_for_range(
+        self, apr_data: list[dict], start_timestamp: int, end_timestamp: int
+    ) -> float | None:
+        """Calculate average APR for a time range.
+
+        Averages all APR values from oracle reports within the given timestamp range.
+        Falls back to the closest APR before the range if no reports fall within.
+
+        Args:
+            apr_data: List of {block, apr, blockTime} sorted by block ascending
+            start_timestamp: Unix timestamp for range start
+            end_timestamp: Unix timestamp for range end
+
+        Returns:
+            Average APR as a percentage, or None if no data available
+        """
+        if not apr_data:
+            return None
+
+        # Find all APR reports within the time range
+        reports_in_range = []
+        closest_before = None
+
+        for entry in apr_data:
+            block_time = int(entry["blockTime"])
+            if block_time < start_timestamp:
+                closest_before = entry  # Keep track of most recent before range
+            elif block_time <= end_timestamp:
+                reports_in_range.append(entry)
+            else:
+                break  # Past the range, stop searching
+
+        if reports_in_range:
+            # Average all reports within the range
+            total_apr = sum(float(r["apr"]) for r in reports_in_range)
+            return total_apr / len(reports_in_range)
+        elif closest_before:
+            # No reports in range, use the closest one before
+            return float(closest_before["apr"])
+
+        return None

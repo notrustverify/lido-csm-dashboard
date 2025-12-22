@@ -31,6 +31,8 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
         "operator_id": rewards.node_operator_id,
         "manager_address": rewards.manager_address,
         "reward_address": rewards.reward_address,
+        "curve_id": rewards.curve_id,
+        "operator_type": rewards.operator_type,
         "rewards": {
             "current_bond_eth": float(rewards.current_bond_eth),
             "required_bond_eth": float(rewards.required_bond_eth),
@@ -83,6 +85,10 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
             "lifetime_distribution_eth": rewards.apy.lifetime_distribution_eth,
             "lifetime_bond_eth": lifetime_bond,  # Actual excess bond, not estimate
             "lifetime_net_total_eth": lifetime_net_total,  # Matches Total Claimable
+            # Accurate lifetime APY (per-frame bond calculation when available)
+            "lifetime_reward_apy": rewards.apy.lifetime_reward_apy,
+            "lifetime_bond_apy": rewards.apy.lifetime_bond_apy,
+            "lifetime_net_apy": rewards.apy.lifetime_net_apy,
             "next_distribution_date": rewards.apy.next_distribution_date,
             "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
             "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
@@ -102,6 +108,7 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
                     "rewards_eth": f.rewards_eth,
                     "rewards_shares": f.rewards_shares,
                     "duration_days": f.duration_days,
+                    "validator_count": f.validator_count,
                     "apy": f.apy,
                 }
                 for f in rewards.apy.frames
@@ -226,10 +233,11 @@ def rewards(
     active_since_str = ""
     if rewards.active_since:
         active_since_str = f"Active Since: {rewards.active_since.strftime('%b %d, %Y')}"
+    operator_type_str = f"Type: {rewards.operator_type}"
     console.print(
         Panel(
             f"[bold]CSM Operator #{rewards.node_operator_id}[/bold]\n"
-            f"{active_since_str}\n\n"
+            f"{active_since_str}  |  {operator_type_str}\n\n"
             f"Manager: {rewards.manager_address}\n"
             f"Rewards: {rewards.reward_address}",
             title="Operator Info",
@@ -410,71 +418,116 @@ def rewards(
 
     # APY Metrics table (only shown with --detailed or --history flag)
     if (detailed or history) and rewards.apy:
-        apy_table = Table(title="APY Metrics (Historical)")
-        apy_table.add_column("Metric", style="cyan")
-        apy_table.add_column("Previous", style="green", justify="right")
-        apy_table.add_column("Current", style="green", justify="right")
-        apy_table.add_column("Lifetime", style="green", justify="right")
-
         def fmt_apy(val: float | None) -> str:
             return f"{val:.2f}%" if val is not None else "--"
 
         def fmt_eth(val: float | None) -> str:
             return f"{val:.4f}" if val is not None else "--"
 
-        apy_table.add_row(
-            "Reward APY",
-            fmt_apy(rewards.apy.previous_distribution_apy),
-            fmt_apy(rewards.apy.current_distribution_apy),
-            fmt_apy(rewards.apy.historical_reward_apy_ltd),
-        )
-        # Show historical APR for Previous/Current if available, otherwise current APR
-        prev_bond_apr = rewards.apy.previous_bond_apr or rewards.apy.bond_apy
-        curr_bond_apr = rewards.apy.current_bond_apr or rewards.apy.bond_apy
-        # Only show asterisk if NOT using historical APR from subgraph
-        bond_label = "Bond APY (stETH)" if rewards.apy.uses_historical_apr else "Bond APY (stETH)*"
-        apy_table.add_row(
-            bond_label,
-            fmt_apy(prev_bond_apr),
-            fmt_apy(curr_bond_apr),
-            fmt_apy(rewards.apy.bond_apy),  # Lifetime uses current APR
-        )
-        apy_table.add_row(
-            "[bold]NET APY[/bold]",
-            f"[bold yellow]{fmt_apy(rewards.apy.previous_net_apy)}[/bold yellow]",
-            f"[bold yellow]{fmt_apy(rewards.apy.net_apy_28d)}[/bold yellow]",
-            f"[bold yellow]{fmt_apy(rewards.apy.net_apy_ltd)}[/bold yellow]",
-        )
-        apy_table.add_row("─" * 15, "─" * 10, "─" * 10, "─" * 10)
-        apy_table.add_row(
-            "Rewards (stETH)",
-            fmt_eth(rewards.apy.previous_distribution_eth),
-            fmt_eth(rewards.apy.current_distribution_eth),
-            fmt_eth(rewards.apy.lifetime_distribution_eth),
-        )
-        # Use actual excess bond for Lifetime column (estimates for Previous/Current)
-        lifetime_bond = float(rewards.excess_bond_eth)
-        apy_table.add_row(
-            "Bond (stETH)*",
-            fmt_eth(rewards.apy.previous_bond_eth),
-            fmt_eth(rewards.apy.current_bond_eth),
-            fmt_eth(lifetime_bond),
-        )
-        # Calculate actual Net Total for Lifetime column
-        lifetime_net_total = (rewards.apy.lifetime_distribution_eth or 0) + lifetime_bond
-        apy_table.add_row(
-            "[bold]Net Total (stETH)[/bold]",
-            f"[bold]{fmt_eth(rewards.apy.previous_net_total_eth)}[/bold]",
-            f"[bold]{fmt_eth(rewards.apy.current_net_total_eth)}[/bold]",
-            f"[bold]{fmt_eth(lifetime_net_total)}[/bold]",
-        )
+        # Determine which columns to show
+        # --detailed only: Current column only
+        # --history: Previous, Current, and Lifetime columns
+        show_all_columns = history
 
-        console.print(apy_table)
-        # Show appropriate footer based on whether historical APR was used
-        if rewards.apy.uses_historical_apr:
-            console.print("[dim]*Bond (stETH) uses current bond amount; Lifetime uses actual Excess Bond[/dim]")
+        if show_all_columns:
+            # Full table with 3 columns (Previous, Current, Lifetime)
+            apy_table = Table(title="APY Metrics")
+            apy_table.add_column("Metric", style="cyan")
+            apy_table.add_column("Previous", style="green", justify="right")
+            apy_table.add_column("Current", style="green", justify="right")
+            apy_table.add_column("Lifetime", style="green", justify="right")
+
+            # Use accurate lifetime APY when available (per-frame bond calculation)
+            lifetime_reward_apy = rewards.apy.lifetime_reward_apy or rewards.apy.historical_reward_apy_ltd
+            lifetime_bond_apy = rewards.apy.lifetime_bond_apy or rewards.apy.bond_apy
+            lifetime_net_apy = rewards.apy.lifetime_net_apy or rewards.apy.net_apy_ltd
+
+            apy_table.add_row(
+                "Reward APY",
+                fmt_apy(rewards.apy.previous_distribution_apy),
+                fmt_apy(rewards.apy.current_distribution_apy),
+                fmt_apy(lifetime_reward_apy),
+            )
+            # Show historical APR for Previous/Current if available, otherwise current APR
+            prev_bond_apr = rewards.apy.previous_bond_apr or rewards.apy.bond_apy
+            curr_bond_apr = rewards.apy.current_bond_apr or rewards.apy.bond_apy
+            bond_label = "Bond APY (stETH)"
+            apy_table.add_row(
+                bond_label,
+                fmt_apy(prev_bond_apr),
+                fmt_apy(curr_bond_apr),
+                fmt_apy(lifetime_bond_apy),
+            )
+            apy_table.add_row(
+                "[bold]NET APY[/bold]",
+                f"[bold yellow]{fmt_apy(rewards.apy.previous_net_apy)}[/bold yellow]",
+                f"[bold yellow]{fmt_apy(rewards.apy.net_apy_28d)}[/bold yellow]",
+                f"[bold yellow]{fmt_apy(lifetime_net_apy)}[/bold yellow]",
+            )
+            apy_table.add_row("─" * 15, "─" * 10, "─" * 10, "─" * 10)
+            apy_table.add_row(
+                "Rewards (stETH)",
+                fmt_eth(rewards.apy.previous_distribution_eth),
+                fmt_eth(rewards.apy.current_distribution_eth),
+                fmt_eth(rewards.apy.lifetime_distribution_eth),
+            )
+            # All columns show estimated bond stETH rebasing earnings (consistent metric)
+            apy_table.add_row(
+                "Bond (stETH)*",
+                fmt_eth(rewards.apy.previous_bond_eth),
+                fmt_eth(rewards.apy.current_bond_eth),
+                fmt_eth(rewards.apy.lifetime_bond_eth),
+            )
+            # All columns show sum of Rewards + Bond (consistent metric)
+            apy_table.add_row(
+                "[bold]Net Total (stETH)[/bold]",
+                f"[bold]{fmt_eth(rewards.apy.previous_net_total_eth)}[/bold]",
+                f"[bold]{fmt_eth(rewards.apy.current_net_total_eth)}[/bold]",
+                f"[bold]{fmt_eth(rewards.apy.lifetime_net_total_eth)}[/bold]",
+            )
+
+            console.print(apy_table)
+            # Show footnote about per-frame bond calculation
+            console.print("[dim]*Previous/Current use per-frame validator count for bond calculations[/dim]")
         else:
-            console.print("[dim]*Previous/Current are estimates (current APR/bond); Lifetime uses actual Excess Bond[/dim]")
+            # Single column (Current only) for --detailed without --history
+            apy_table = Table(title="APY Metrics (Current Frame)")
+            apy_table.add_column("Metric", style="cyan")
+            apy_table.add_column("Current", style="green", justify="right")
+
+            apy_table.add_row(
+                "Reward APY",
+                fmt_apy(rewards.apy.current_distribution_apy),
+            )
+            curr_bond_apr = rewards.apy.current_bond_apr or rewards.apy.bond_apy
+            apy_table.add_row(
+                "Bond APY (stETH)",
+                fmt_apy(curr_bond_apr),
+            )
+            apy_table.add_row(
+                "[bold]NET APY[/bold]",
+                f"[bold yellow]{fmt_apy(rewards.apy.net_apy_28d)}[/bold yellow]",
+            )
+            apy_table.add_row("─" * 15, "─" * 10)
+            apy_table.add_row(
+                "Rewards (stETH)",
+                fmt_eth(rewards.apy.current_distribution_eth),
+            )
+            apy_table.add_row(
+                "Bond (stETH)*",
+                fmt_eth(rewards.apy.current_bond_eth),
+            )
+            apy_table.add_row(
+                "[bold]Net Total (stETH)[/bold]",
+                f"[bold]{fmt_eth(rewards.apy.current_net_total_eth)}[/bold]",
+            )
+
+            console.print(apy_table)
+            # Show appropriate footer based on whether historical APR was used
+            if rewards.apy.uses_historical_apr:
+                console.print("[dim]*Bond (stETH) is estimated from current bond and historical APR[/dim]")
+            else:
+                console.print("[dim]*Bond (stETH) is estimated from current bond and APR[/dim]")
 
         # Show next distribution estimate
         if rewards.apy.next_distribution_date:
@@ -498,8 +551,8 @@ def rewards(
             history_table.add_column("#", style="cyan", justify="right")
             history_table.add_column("Distribution Date", style="white")
             history_table.add_column("Rewards (ETH)", style="green", justify="right")
-            history_table.add_column("Duration", style="dim", justify="right")
-            history_table.add_column("APY", style="green", justify="right")
+            history_table.add_column("Vals", style="dim", justify="right")
+            history_table.add_column("ETH/Val", style="green", justify="right")
 
             # Display oldest first (chronological order)
             for frame in rewards.apy.frames:
@@ -509,12 +562,15 @@ def rewards(
                 except (ValueError, TypeError):
                     dist_date = frame.end_date
 
+                # Calculate ETH per validator
+                eth_per_val = frame.rewards_eth / frame.validator_count if frame.validator_count > 0 else 0
+
                 history_table.add_row(
                     str(frame.frame_number),
                     dist_date,
                     f"{frame.rewards_eth:.4f}",
-                    f"{frame.duration_days:.1f} days",
-                    fmt_apy(frame.apy),
+                    str(frame.validator_count),
+                    f"{eth_per_val:.6f}",
                 )
 
             console.print(history_table)

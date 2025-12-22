@@ -122,6 +122,81 @@ class OnChainDataProvider:
 
         return None
 
+    @cached(ttl=300)
+    async def get_bond_curve_id(self, operator_id: int) -> int:
+        """Get the bond curve ID for an operator.
+
+        Returns:
+            0 = Permissionless (2.4 ETH first validator, 1.3 ETH subsequent)
+            1 = ICS/Legacy EA (1.5 ETH first validator, 1.3 ETH subsequent)
+        """
+        try:
+            return self.csaccounting.functions.getBondCurveId(operator_id).call()
+        except Exception:
+            # Fall back to 0 (Permissionless) if call fails
+            return 0
+
+    @staticmethod
+    def calculate_required_bond(validator_count: int, curve_id: int = 0) -> Decimal:
+        """Calculate required bond for a given validator count and curve type.
+
+        Args:
+            validator_count: Number of validators
+            curve_id: Bond curve ID from CSAccounting contract
+
+        Returns:
+            Required bond in ETH
+
+        Note:
+            Curve IDs on mainnet CSM:
+            - Curve 0: Original permissionless (2 ETH first, 1.3 ETH subsequent) - deprecated
+            - Curve 1: Original ICS/EA (1.5 ETH first, 1.3 ETH subsequent) - deprecated
+            - Curve 2: Current permissionless default (1.5 ETH first, 1.3 ETH subsequent)
+            The contract returns curve points directly, but for estimation we use
+            standard formulas.
+        """
+        if validator_count <= 0:
+            return Decimal(0)
+
+        # Curve 2 is the current mainnet default (1.5 ETH first, 1.3 ETH subsequent)
+        # Curve 0/1 were the original curves, now deprecated
+        if curve_id == 0:  # Original Permissionless (deprecated)
+            first_bond = Decimal("2.0")
+        else:  # Curve 1, 2, etc - current default curves
+            first_bond = Decimal("1.5")
+
+        subsequent_bond = Decimal("1.3")
+
+        if validator_count == 1:
+            return first_bond
+        else:
+            return first_bond + (subsequent_bond * (validator_count - 1))
+
+    @staticmethod
+    def get_operator_type_name(curve_id: int) -> str:
+        """Get human-readable operator type from curve ID.
+
+        Args:
+            curve_id: Bond curve ID from CSAccounting contract
+
+        Returns:
+            Operator type name
+
+        Note:
+            Curve IDs on mainnet CSM:
+            - Curve 0: Original permissionless (deprecated)
+            - Curve 1: Original ICS/EA (deprecated)
+            - Curve 2: Current permissionless default
+        """
+        if curve_id == 0:
+            return "Permissionless (Legacy)"
+        elif curve_id == 1:
+            return "ICS/Legacy EA"
+        elif curve_id == 2:
+            return "Permissionless"
+        else:
+            return f"Custom (Curve {curve_id})"
+
     @cached(ttl=60)
     async def get_bond_summary(self, operator_id: int) -> BondSummary:
         """Get bond summary for an operator."""
