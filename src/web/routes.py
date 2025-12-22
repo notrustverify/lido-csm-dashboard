@@ -43,6 +43,8 @@ async def get_operator(
         "operator_id": rewards.node_operator_id,
         "manager_address": rewards.manager_address,
         "reward_address": rewards.reward_address,
+        "curve_id": rewards.curve_id,
+        "operator_type": rewards.operator_type,
         "rewards": {
             "current_bond_eth": float(rewards.current_bond_eth),
             "required_bond_eth": float(rewards.required_bond_eth),
@@ -101,6 +103,10 @@ async def get_operator(
             "lifetime_distribution_eth": rewards.apy.lifetime_distribution_eth,
             "lifetime_bond_eth": lifetime_bond,  # Actual excess bond, not estimate
             "lifetime_net_total_eth": lifetime_net_total,  # Matches Total Claimable
+            # Accurate lifetime APY (per-frame bond calculation when available)
+            "lifetime_reward_apy": rewards.apy.lifetime_reward_apy,
+            "lifetime_bond_apy": rewards.apy.lifetime_bond_apy,
+            "lifetime_net_apy": rewards.apy.lifetime_net_apy,
             "next_distribution_date": rewards.apy.next_distribution_date,
             "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
             "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
@@ -120,6 +126,7 @@ async def get_operator(
                     "rewards_eth": f.rewards_eth,
                     "rewards_shares": f.rewards_shares,
                     "duration_days": f.duration_days,
+                    "validator_count": f.validator_count,
                     "apy": f.apy,
                 }
                 for f in rewards.apy.frames
