@@ -127,6 +127,7 @@ class OperatorService:
                 bond=bond,
                 stuck_validators_count=operator.stuck_validators_count,
                 validator_details=validator_details,
+                curve_id=curve_id,
             )
 
         # Step 12: Fetch withdrawal history if requested
@@ -503,6 +504,7 @@ class OperatorService:
         bond: BondSummary,
         stuck_validators_count: int,
         validator_details: list[ValidatorInfo],
+        curve_id: int | None = None,
     ) -> HealthStatus:
         """Calculate health status for an operator.
 
@@ -516,16 +518,17 @@ class OperatorService:
         slashed_count = count_slashed_validators(validator_details)
         at_risk_count = count_at_risk_validators(validator_details)
 
-        # Get strikes data
+        # Get strikes data (pass curve_id for operator-specific thresholds)
         strike_summary = StrikeSummary()
         try:
-            summary = await self.strikes.get_operator_strike_summary(operator_id)
+            summary = await self.strikes.get_operator_strike_summary(operator_id, curve_id)
             strike_summary = StrikeSummary(
                 total_validators_with_strikes=summary.get("total_validators_with_strikes", 0),
                 validators_at_risk=summary.get("validators_at_risk", 0),
                 validators_near_ejection=summary.get("validators_near_ejection", 0),
                 total_strikes=summary.get("total_strikes", 0),
                 max_strikes=summary.get("max_strikes", 0),
+                strike_threshold=summary.get("strike_threshold", 3),
             )
         except Exception:
             # If strikes fetch fails, continue with empty summary
@@ -540,9 +543,14 @@ class OperatorService:
             strikes=strike_summary,
         )
 
-    async def get_operator_strikes(self, operator_id: int):
-        """Get detailed strikes for an operator's validators."""
-        return await self.strikes.get_operator_strikes(operator_id)
+    async def get_operator_strikes(self, operator_id: int, curve_id: int | None = None):
+        """Get detailed strikes for an operator's validators.
+
+        Args:
+            operator_id: The CSM operator ID
+            curve_id: The operator's bond curve ID (determines strike threshold)
+        """
+        return await self.strikes.get_operator_strikes(operator_id, curve_id)
 
     async def get_recent_frame_dates(self, count: int = 6) -> list[dict]:
         """Get date ranges for the most recent N distribution frames.

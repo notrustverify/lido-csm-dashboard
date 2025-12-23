@@ -473,9 +473,11 @@ def create_app() -> FastAPI:
                                 const opId = document.getElementById('operator-id').textContent;
                                 const strikesResp = await fetch(`/api/operator/${opId}/strikes`);
                                 const strikesData = await strikesResp.json();
+                                const threshold = strikesData.strike_threshold || 3;
                                 strikesList.innerHTML = strikesData.validators.map(v => {
+                                    const vThreshold = v.strike_threshold || threshold;
                                     const colorClass = v.at_ejection_risk ? 'text-red-400' :
-                                        (v.strike_count === 2 ? 'text-orange-400' : 'text-yellow-400');
+                                        (v.strike_count === vThreshold - 1 ? 'text-orange-400' : 'text-yellow-400');
 
                                     // Generate 6 dots with date tooltips
                                     const dots = v.strikes.map((strike, i) => {
@@ -497,7 +499,7 @@ def create_app() -> FastAPI:
                                         <a href="${beaconUrl}" target="_blank" rel="noopener"
                                            class="text-blue-400 hover:text-blue-300 text-sm" title="View on beaconcha.in">↗</a>
                                         <span class="flex gap-0.5 text-base ml-1">${dots}</span>
-                                        <span class="text-gray-400 text-xs">(${v.strike_count}/3)</span>
+                                        <span class="text-gray-400 text-xs">(${v.strike_count}/${vThreshold})</span>
                                     </div>`;
                                 }).join('');
                                 strikesLoaded = true;
@@ -533,6 +535,7 @@ def create_app() -> FastAPI:
                     }
 
                     // Overall - color-coded by severity
+                    const strikeThreshold = h.strikes.strike_threshold || 3;
                     if (!h.has_issues) {
                         document.getElementById('health-overall').innerHTML = '<span class="text-green-400">No issues detected</span>';
                     } else if (
@@ -540,18 +543,18 @@ def create_app() -> FastAPI:
                         h.stuck_validators_count > 0 ||
                         h.slashed_validators_count > 0 ||
                         h.validators_at_risk_count > 0 ||
-                        h.strikes.max_strikes >= 3
+                        h.strikes.max_strikes >= strikeThreshold
                     ) {
                         // Critical issues (red)
                         let message = 'Issues detected - action required!';
-                        if (h.strikes.max_strikes >= 3) {
-                            message = `Validator ejectable (${h.strikes.validators_at_risk} at 3/3 strikes)`;
+                        if (h.strikes.max_strikes >= strikeThreshold) {
+                            message = `Validator ejectable (${h.strikes.validators_at_risk} at ${strikeThreshold}/${strikeThreshold} strikes)`;
                         }
                         document.getElementById('health-overall').innerHTML = `<span class="text-red-400">${message}</span>`;
-                    } else if (h.strikes.max_strikes === 2) {
+                    } else if (h.strikes.max_strikes === strikeThreshold - 1) {
                         // Warning level 2 (orange) - one more strike = ejectable
                         document.getElementById('health-overall').innerHTML =
-                            `<span class="text-orange-400">Warning - ${h.strikes.validators_near_ejection} validator(s) at 2/3 strikes</span>`;
+                            `<span class="text-orange-400">Warning - ${h.strikes.validators_near_ejection} validator(s) at ${strikeThreshold - 1}/${strikeThreshold} strikes</span>`;
                     } else {
                         // Warning level 1 (yellow) - has strikes but not critical
                         document.getElementById('health-overall').innerHTML =

@@ -13,6 +13,22 @@ from ..core.config import get_settings
 from .cache import cached
 
 
+# Strike thresholds by operator type (curve_id)
+# Default (Permissionless): 3 strikes till key exit
+# ICS (Identified Community Staker): 4 strikes till key exit
+STRIKE_THRESHOLDS = {
+    0: 3,  # Permissionless (Legacy)
+    1: 4,  # ICS/Legacy EA
+    2: 3,  # Permissionless (current)
+}
+DEFAULT_STRIKE_THRESHOLD = 3
+
+
+def get_strike_threshold(curve_id: int) -> int:
+    """Get the strike threshold for ejection based on operator curve_id."""
+    return STRIKE_THRESHOLDS.get(curve_id, DEFAULT_STRIKE_THRESHOLD)
+
+
 @dataclass
 class ValidatorStrikes:
     """Strike information for a single validator."""
@@ -20,7 +36,8 @@ class ValidatorStrikes:
     pubkey: str
     strikes: list[int]  # Array of 6 values (0 or 1) representing strikes per frame
     strike_count: int  # Total strikes in the 6-frame window
-    at_ejection_risk: bool  # True if 3+ strikes (eligible for ejection)
+    strike_threshold: int  # Number of strikes required for ejection (3 or 4)
+    at_ejection_risk: bool  # True if strike_count >= strike_threshold
 
 
 class StrikesProvider:
@@ -141,12 +158,16 @@ class StrikesProvider:
             return None
         return await self._fetch_tree_from_ipfs(cid)
 
-    async def get_operator_strikes(self, operator_id: int) -> list[ValidatorStrikes]:
+    async def get_operator_strikes(
+        self, operator_id: int, curve_id: int | None = None
+    ) -> list[ValidatorStrikes]:
         """
         Get strikes for all validators belonging to an operator.
 
         Args:
             operator_id: The CSM operator ID
+            curve_id: The operator's bond curve ID (determines strike threshold)
+                     If None, defaults to 3 strikes (permissionless threshold)
 
         Returns:
             List of ValidatorStrikes for validators with any strikes.
@@ -158,6 +179,9 @@ class StrikesProvider:
 
         values = tree_data.get("values", [])
         operator_strikes = []
+
+        # Determine strike threshold based on operator type
+        strike_threshold = get_strike_threshold(curve_id) if curve_id is not None else DEFAULT_STRIKE_THRESHOLD
 
         for entry in values:
             value = entry.get("value", [])
@@ -179,33 +203,42 @@ class StrikesProvider:
                     pubkey=pubkey,
                     strikes=strikes_array if isinstance(strikes_array, list) else [],
                     strike_count=strike_count,
-                    at_ejection_risk=strike_count >= 3,
+                    strike_threshold=strike_threshold,
+                    at_ejection_risk=strike_count >= strike_threshold,
                 )
             )
 
         return operator_strikes
 
     async def get_operator_strike_summary(
-        self, operator_id: int
+        self, operator_id: int, curve_id: int | None = None
     ) -> dict[str, int]:
         """
         Get a summary of strikes for an operator.
 
+        Args:
+            operator_id: The CSM operator ID
+            curve_id: The operator's bond curve ID (determines strike threshold)
+
         Returns:
             Dict with:
             - total_validators_with_strikes: Count of validators with any strikes
-            - validators_at_risk: Count of validators with 3+ strikes
+            - validators_at_risk: Count of validators at ejection risk (>= threshold)
+            - validators_near_ejection: Count one strike away from ejection
             - total_strikes: Sum of all strikes across all validators
             - max_strikes: Highest strike count on any single validator
+            - strike_threshold: The ejection threshold for this operator type
         """
-        strikes = await self.get_operator_strikes(operator_id)
+        strikes = await self.get_operator_strikes(operator_id, curve_id)
+        strike_threshold = get_strike_threshold(curve_id) if curve_id is not None else DEFAULT_STRIKE_THRESHOLD
 
         return {
             "total_validators_with_strikes": len(strikes),
             "validators_at_risk": sum(1 for s in strikes if s.at_ejection_risk),
-            "validators_near_ejection": sum(1 for s in strikes if s.strike_count == 2),
+            "validators_near_ejection": sum(1 for s in strikes if s.strike_count == strike_threshold - 1),
             "total_strikes": sum(s.strike_count for s in strikes),
             "max_strikes": max((s.strike_count for s in strikes), default=0),
+            "strike_threshold": strike_threshold,
         }
 
     def clear_cache(self) -> None:
