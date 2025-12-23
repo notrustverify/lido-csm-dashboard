@@ -339,8 +339,9 @@ class OnChainDataProvider:
         """
         Get withdrawal history for an operator's reward address.
 
-        Queries stETH Transfer events from CSFeeDistributor to the reward address.
+        Queries stETH Transfer events from CSAccounting to the reward address.
         These represent when the operator claimed their rewards.
+        (Note: Claims flow CSFeeDistributor -> CSAccounting -> reward_address)
 
         Args:
             reward_address: The operator's reward address
@@ -353,14 +354,14 @@ class OnChainDataProvider:
             start_block = 20873000  # CSM deployment block
 
         reward_address = Web3.to_checksum_address(reward_address)
-        csfeedistributor_address = self.settings.csfeedistributor_address
+        csaccounting_address = self.settings.csaccounting_address
 
         # 1. Try Etherscan API first (most reliable)
         etherscan = EtherscanProvider()
         if etherscan.is_available():
             events = await etherscan.get_transfer_events(
                 token_address=self.settings.steth_address,
-                from_address=csfeedistributor_address,
+                from_address=csaccounting_address,
                 to_address=reward_address,
                 from_block=start_block,
             )
@@ -370,7 +371,7 @@ class OnChainDataProvider:
 
         # 2. Try chunked RPC queries
         events = await self._query_transfer_events_chunked(
-            csfeedistributor_address, reward_address, start_block
+            csaccounting_address, reward_address, start_block
         )
         if events:
             return await self._enrich_withdrawal_events(events)
