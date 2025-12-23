@@ -576,31 +576,31 @@ def rewards(
             console.print(history_table)
             console.print()
 
-        # Show withdrawal history if --withdrawals flag is used
-        if withdrawals and rewards.withdrawals:
-            from datetime import datetime
-            withdrawal_table = Table(title="Withdrawal History")
-            withdrawal_table.add_column("#", style="cyan", justify="right")
-            withdrawal_table.add_column("Date", style="white")
-            withdrawal_table.add_column("Amount (stETH)", style="green", justify="right")
-            withdrawal_table.add_column("Tx Hash", style="dim")
+    # Show withdrawal history if --withdrawals flag is used
+    if withdrawals and rewards.withdrawals:
+        from datetime import datetime
+        withdrawal_table = Table(title="Withdrawal History")
+        withdrawal_table.add_column("#", style="cyan", justify="right")
+        withdrawal_table.add_column("Date", style="white")
+        withdrawal_table.add_column("Amount (stETH)", style="green", justify="right")
+        withdrawal_table.add_column("Tx Hash", style="dim")
 
-            for i, w in enumerate(rewards.withdrawals, 1):
-                try:
-                    w_dt = datetime.fromisoformat(w.timestamp)
-                    w_date = w_dt.strftime("%b %d, %Y")
-                except (ValueError, TypeError):
-                    w_date = w.timestamp[:10] if w.timestamp else "--"
+        for i, w in enumerate(rewards.withdrawals, 1):
+            try:
+                w_dt = datetime.fromisoformat(w.timestamp)
+                w_date = w_dt.strftime("%b %d, %Y")
+            except (ValueError, TypeError):
+                w_date = w.timestamp[:10] if w.timestamp else "--"
 
-                withdrawal_table.add_row(
-                    str(i),
-                    w_date,
-                    f"{w.eth_value:.4f}",
-                    f"{w.tx_hash[:10]}..." if w.tx_hash else "--",
-                )
+            withdrawal_table.add_row(
+                str(i),
+                w_date,
+                f"{w.eth_value:.4f}",
+                f"{w.tx_hash[:10]}..." if w.tx_hash else "--",
+            )
 
-            console.print(withdrawal_table)
-            console.print()
+        console.print(withdrawal_table)
+        console.print()
 
 
 @app.command()
