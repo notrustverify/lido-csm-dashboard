@@ -141,9 +141,28 @@ async def get_operator(
                 "shares": w.shares,
                 "eth_value": w.eth_value,
                 "tx_hash": w.tx_hash,
+                "withdrawal_type": w.withdrawal_type,
+                "request_id": w.request_id,
+                "status": w.status,
+                "claimed_eth": w.claimed_eth,
+                "claim_tx_hash": w.claim_tx_hash,
+                "claim_timestamp": w.claim_timestamp,
             }
             for w in rewards.withdrawals
         ]
+
+        # Add summary for pending unstETH requests
+        pending_unsteth = [
+            w for w in rewards.withdrawals
+            if w.withdrawal_type == "unstETH"
+            and w.status in ("pending", "finalized")
+        ]
+        if pending_unsteth:
+            result["pending_unsteth"] = {
+                "count": len(pending_unsteth),
+                "ready_to_claim": sum(1 for w in pending_unsteth if w.status == "finalized"),
+                "total_steth_value": sum(w.eth_value for w in pending_unsteth),
+            }
 
     # Add active_since if available
     if rewards.active_since:

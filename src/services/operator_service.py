@@ -620,6 +620,7 @@ class OperatorService:
         """Get withdrawal/claim history for an operator.
 
         Returns list of WithdrawalEvent objects representing when rewards were claimed.
+        Includes both stETH direct transfers and unstETH (withdrawal NFT) claims.
         """
         try:
             operator = await self.onchain.get_node_operator(operator_id)
@@ -631,6 +632,12 @@ class OperatorService:
                     shares=e["shares"],
                     eth_value=e["eth_value"],
                     tx_hash=e["tx_hash"],
+                    withdrawal_type=e.get("withdrawal_type", "stETH"),
+                    request_id=e.get("request_id"),
+                    status=e.get("status"),
+                    claimed_eth=e.get("claimed_eth"),
+                    claim_tx_hash=e.get("claim_tx_hash"),
+                    claim_timestamp=e.get("claim_timestamp"),
                 )
                 for e in events
             ]

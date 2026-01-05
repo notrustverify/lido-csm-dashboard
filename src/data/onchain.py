@@ -11,6 +11,7 @@ from ..core.contracts import (
     CSFEEDISTRIBUTOR_ABI,
     CSMODULE_ABI,
     STETH_ABI,
+    WITHDRAWAL_QUEUE_ABI,
 )
 from ..core.types import BondSummary, NodeOperator
 from .cache import cached
@@ -41,6 +42,10 @@ class OnChainDataProvider:
         self.steth = self.w3.eth.contract(
             address=Web3.to_checksum_address(self.settings.steth_address),
             abi=STETH_ABI,
+        )
+        self.withdrawal_queue = self.w3.eth.contract(
+            address=Web3.to_checksum_address(self.settings.withdrawal_queue_address),
+            abi=WITHDRAWAL_QUEUE_ABI,
         )
 
     @cached(ttl=60)
@@ -337,23 +342,38 @@ class OnChainDataProvider:
         self, reward_address: str, start_block: int | None = None
     ) -> list[dict]:
         """
-        Get withdrawal history for an operator's reward address.
+        Get complete withdrawal history for an operator's reward address.
 
-        Queries stETH Transfer events from CSAccounting to the reward address.
-        These represent when the operator claimed their rewards.
-        (Note: Claims flow CSFeeDistributor -> CSAccounting -> reward_address)
+        Combines multiple withdrawal types:
+        1. stETH Transfer events from CSAccounting (claimRewardsStETH)
+        2. unstETH withdrawal requests/claims (claimRewardsUnstETH)
 
         Args:
             reward_address: The operator's reward address
             start_block: Starting block number (default: CSM deployment ~20873000)
 
         Returns:
-            List of withdrawal events with block, tx_hash, shares, and timestamp
+            List of withdrawal events with block, tx_hash, shares, timestamp, and type
         """
         if start_block is None:
             start_block = 20873000  # CSM deployment block
 
         reward_address = Web3.to_checksum_address(reward_address)
+
+        # Fetch both stETH and unstETH withdrawals
+        steth_events = await self._get_steth_withdrawals(reward_address, start_block)
+        unsteth_events = await self._get_unsteth_withdrawals(reward_address, start_block)
+
+        # Combine and sort by block number
+        all_events = steth_events + unsteth_events
+        all_events.sort(key=lambda x: x["block_number"])
+
+        return all_events
+
+    async def _get_steth_withdrawals(
+        self, reward_address: str, start_block: int
+    ) -> list[dict]:
+        """Get stETH direct transfer withdrawals (claimRewardsStETH)."""
         csaccounting_address = self.settings.csaccounting_address
 
         # 1. Try Etherscan API first (most reliable)
@@ -366,17 +386,217 @@ class OnChainDataProvider:
                 from_block=start_block,
             )
             if events:
-                # Enrich with block timestamps
-                return await self._enrich_withdrawal_events(events)
+                enriched = await self._enrich_withdrawal_events(events)
+                # Mark as stETH type
+                for e in enriched:
+                    e["withdrawal_type"] = "stETH"
+                return enriched
 
         # 2. Try chunked RPC queries
         events = await self._query_transfer_events_chunked(
             csaccounting_address, reward_address, start_block
         )
         if events:
-            return await self._enrich_withdrawal_events(events)
+            enriched = await self._enrich_withdrawal_events(events)
+            for e in enriched:
+                e["withdrawal_type"] = "stETH"
+            return enriched
 
         return []
+
+    async def _get_unsteth_withdrawals(
+        self, reward_address: str, start_block: int
+    ) -> list[dict]:
+        """Get unstETH withdrawal requests (claimRewardsUnstETH).
+
+        Queries WithdrawalRequested events where CSAccounting is the requestor
+        and the reward_address is the owner of the withdrawal NFT.
+        """
+        csaccounting_address = self.settings.csaccounting_address
+
+        # Try Etherscan API first
+        etherscan = EtherscanProvider()
+        if etherscan.is_available():
+            events = await etherscan.get_withdrawal_requested_events(
+                contract_address=self.settings.withdrawal_queue_address,
+                requestor=csaccounting_address,
+                owner=reward_address,
+                from_block=start_block,
+            )
+            if events:
+                return await self._enrich_unsteth_events(events, reward_address)
+
+        # Fallback to chunked RPC queries
+        events = await self._query_withdrawal_requested_chunked(
+            csaccounting_address, reward_address, start_block
+        )
+        if events:
+            return await self._enrich_unsteth_events(events, reward_address)
+
+        return []
+
+    async def _query_withdrawal_requested_chunked(
+        self,
+        requestor: str,
+        owner: str,
+        start_block: int,
+        chunk_size: int = 10000,
+    ) -> list[dict]:
+        """Query WithdrawalRequested events in chunks via RPC."""
+        current_block = self.w3.eth.block_number
+        all_events = []
+
+        requestor = Web3.to_checksum_address(requestor)
+        owner = Web3.to_checksum_address(owner)
+
+        for from_blk in range(start_block, current_block, chunk_size):
+            to_blk = min(from_blk + chunk_size - 1, current_block)
+            try:
+                events = self.withdrawal_queue.events.WithdrawalRequested.get_logs(
+                    from_block=from_blk,
+                    to_block=to_blk,
+                    argument_filters={
+                        "requestor": requestor,
+                        "owner": owner,
+                    },
+                )
+                for e in events:
+                    all_events.append(
+                        {
+                            "request_id": e["args"]["requestId"],
+                            "block": e["blockNumber"],
+                            "tx_hash": e["transactionHash"].hex(),
+                            "amount_steth": e["args"]["amountOfStETH"],
+                            "amount_shares": e["args"]["amountOfShares"],
+                        }
+                    )
+            except Exception:
+                # If chunked queries fail, give up on this method
+                return []
+
+        return sorted(all_events, key=lambda x: x["block"])
+
+    async def _enrich_unsteth_events(
+        self, events: list[dict], reward_address: str
+    ) -> list[dict]:
+        """Add timestamps, status, and claim info to unstETH events."""
+        from datetime import datetime, timezone
+
+        if not events:
+            return []
+
+        # Get status for all request IDs
+        request_ids = [e["request_id"] for e in events]
+        try:
+            statuses = self.withdrawal_queue.functions.getWithdrawalStatus(
+                request_ids
+            ).call()
+        except Exception:
+            # If status query fails, set all as unknown
+            statuses = [None] * len(events)
+
+        # Get claim events for this address
+        claim_events = await self._get_withdrawal_claimed_events(reward_address)
+        claims_by_request = {c["request_id"]: c for c in claim_events}
+
+        enriched = []
+        for i, event in enumerate(events):
+            try:
+                # Get block timestamp
+                block = self.w3.eth.get_block(event["block"])
+                timestamp = datetime.fromtimestamp(
+                    block["timestamp"], tz=timezone.utc
+                ).isoformat()
+
+                # Determine status from contract query
+                status = statuses[i] if i < len(statuses) and statuses[i] else None
+                if status:
+                    if status[5]:  # isClaimed
+                        withdrawal_status = "claimed"
+                    elif status[4]:  # isFinalized
+                        withdrawal_status = "finalized"
+                    else:
+                        withdrawal_status = "pending"
+                else:
+                    withdrawal_status = "unknown"
+
+                # Convert shares to ETH for display
+                shares = event.get("amount_shares", event.get("value", 0))
+                eth_value = await self.shares_to_eth(shares)
+
+                enriched_event = {
+                    "block_number": event["block"],
+                    "timestamp": timestamp,
+                    "shares": shares,
+                    "eth_value": float(eth_value),
+                    "tx_hash": event["tx_hash"],
+                    "withdrawal_type": "unstETH",
+                    "request_id": event["request_id"],
+                    "status": withdrawal_status,
+                }
+
+                # Add claim info if claimed
+                claim = claims_by_request.get(event["request_id"])
+                if claim:
+                    enriched_event["claimed_eth"] = claim["amount_eth"]
+                    enriched_event["claim_tx_hash"] = claim["tx_hash"]
+                    # Get claim timestamp
+                    try:
+                        claim_block = self.w3.eth.get_block(claim["block"])
+                        enriched_event["claim_timestamp"] = datetime.fromtimestamp(
+                            claim_block["timestamp"], tz=timezone.utc
+                        ).isoformat()
+                    except Exception:
+                        pass
+
+                enriched.append(enriched_event)
+            except Exception:
+                continue
+
+        return enriched
+
+    async def _get_withdrawal_claimed_events(
+        self, receiver: str, start_block: int = 20873000
+    ) -> list[dict]:
+        """Get WithdrawalClaimed events for a receiver address."""
+        receiver = Web3.to_checksum_address(receiver)
+
+        # Try Etherscan first
+        etherscan = EtherscanProvider()
+        if etherscan.is_available():
+            events = await etherscan.get_withdrawal_claimed_events(
+                contract_address=self.settings.withdrawal_queue_address,
+                receiver=receiver,
+                from_block=start_block,
+            )
+            if events:
+                return events
+
+        # RPC fallback - query in chunks
+        current_block = self.w3.eth.block_number
+        all_events = []
+
+        for from_blk in range(start_block, current_block, 10000):
+            to_blk = min(from_blk + 9999, current_block)
+            try:
+                logs = self.withdrawal_queue.events.WithdrawalClaimed.get_logs(
+                    from_block=from_blk,
+                    to_block=to_blk,
+                    argument_filters={"receiver": receiver},
+                )
+                for e in logs:
+                    all_events.append(
+                        {
+                            "request_id": e["args"]["requestId"],
+                            "tx_hash": e["transactionHash"].hex(),
+                            "amount_eth": e["args"]["amountOfETH"] / 10**18,
+                            "block": e["blockNumber"],
+                        }
+                    )
+            except Exception:
+                continue
+
+        return all_events
 
     async def _query_transfer_events_chunked(
         self,

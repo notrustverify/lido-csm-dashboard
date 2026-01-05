@@ -582,7 +582,9 @@ def rewards(
         withdrawal_table = Table(title="Withdrawal History")
         withdrawal_table.add_column("#", style="cyan", justify="right")
         withdrawal_table.add_column("Date", style="white")
-        withdrawal_table.add_column("Amount (stETH)", style="green", justify="right")
+        withdrawal_table.add_column("Type", style="magenta")
+        withdrawal_table.add_column("Amount", style="green", justify="right")
+        withdrawal_table.add_column("Status", style="yellow")
         withdrawal_table.add_column("Tx Hash", style="dim")
 
         for i, w in enumerate(rewards.withdrawals, 1):
@@ -592,15 +594,72 @@ def rewards(
             except (ValueError, TypeError):
                 w_date = w.timestamp[:10] if w.timestamp else "--"
 
+            # Determine display values based on type
+            withdrawal_type = w.withdrawal_type if w.withdrawal_type else "stETH"
+
+            # For unstETH, show claimed ETH if available, otherwise requested stETH
+            if withdrawal_type == "unstETH" and w.claimed_eth is not None:
+                amount_str = f"{w.claimed_eth:.4f} ETH"
+            else:
+                amount_str = f"{w.eth_value:.4f} stETH"
+
+            # Status column for unstETH
+            if withdrawal_type == "unstETH" and w.status:
+                status_colors = {
+                    "pending": "[yellow]Pending[/yellow]",
+                    "finalized": "[blue]Ready[/blue]",
+                    "claimed": "[green]Claimed[/green]",
+                    "unknown": "[dim]Unknown[/dim]",
+                }
+                status_str = status_colors.get(w.status, w.status)
+            elif withdrawal_type != "unstETH":
+                status_str = "[green]Claimed[/green]"
+            else:
+                status_str = "--"
+
             withdrawal_table.add_row(
                 str(i),
                 w_date,
-                f"{w.eth_value:.4f}",
+                withdrawal_type,
+                amount_str,
+                status_str,
                 f"{w.tx_hash[:10]}..." if w.tx_hash else "--",
             )
 
         console.print(withdrawal_table)
+
+        # Show totals
+        steth_total = sum(
+            w.eth_value for w in rewards.withdrawals
+            if w.withdrawal_type != "unstETH"
+        )
+        unsteth_claimed_total = sum(
+            w.claimed_eth for w in rewards.withdrawals
+            if w.withdrawal_type == "unstETH" and w.claimed_eth is not None
+        )
+        if steth_total > 0 or unsteth_claimed_total > 0:
+            total_parts = []
+            if steth_total > 0:
+                total_parts.append(f"{steth_total:.4f} stETH")
+            if unsteth_claimed_total > 0:
+                total_parts.append(f"{unsteth_claimed_total:.4f} ETH")
+            console.print(f"[bold]Total claimed:[/bold] {' + '.join(total_parts)}")
         console.print()
+
+        # Show pending unstETH summary if any
+        pending_unsteth = [
+            w for w in rewards.withdrawals
+            if w.withdrawal_type == "unstETH"
+            and w.status in ("pending", "finalized")
+        ]
+        if pending_unsteth:
+            pending_total = sum(w.eth_value for w in pending_unsteth)
+            ready_count = sum(1 for w in pending_unsteth if w.status == "finalized")
+            console.print(
+                f"[yellow]Note: {len(pending_unsteth)} unstETH request(s) "
+                f"({ready_count} ready to claim) totaling ~{pending_total:.4f} stETH[/yellow]"
+            )
+            console.print()
 
 
 @app.command()

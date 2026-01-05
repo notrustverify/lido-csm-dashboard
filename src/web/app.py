@@ -1,7 +1,10 @@
 """FastAPI application factory."""
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from .routes import router
 
@@ -11,10 +14,15 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="CSM Operator Dashboard",
         description="Track your Lido CSM validator earnings",
-        version="0.1.0",
+        version="0.3.4",
     )
 
     app.include_router(router, prefix="/api")
+
+    # Mount static files for favicon and images
+    img_dir = Path(__file__).parent.parent.parent / "img"
+    if img_dir.exists():
+        app.mount("/img", StaticFiles(directory=str(img_dir)), name="img")
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
@@ -23,6 +31,7 @@ def create_app() -> FastAPI:
 <html>
 <head>
     <title>CSM Operator Dashboard</title>
+    <link rel="icon" type="image/x-icon" href="/img/favicon.ico">
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen p-8">
@@ -247,6 +256,83 @@ def create_app() -> FastAPI:
                     </table>
                 </div>
                 <p class="mt-3 text-xs text-gray-500">*Bond APY uses current stETH rate</p>
+
+                <!-- Next Distribution -->
+                <div id="next-distribution" class="hidden mt-4 pt-4 border-t border-gray-700">
+                    <h4 class="text-md font-semibold mb-2 text-blue-400">Next Distribution</h4>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-400">Estimated Date</span>
+                        <span id="next-dist-date">--</span>
+                    </div>
+                    <div class="flex justify-between text-sm mt-1">
+                        <span class="text-gray-400">Est. Rewards</span>
+                        <span class="text-green-400">~<span id="next-dist-eth">--</span> stETH</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Distribution History Section -->
+            <div id="history-section" class="hidden mt-6 bg-gray-800 rounded-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">Distribution History</h3>
+                    <button id="load-history-btn" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700 text-sm font-medium">
+                        Load History
+                    </button>
+                </div>
+                <div id="history-loading" class="hidden">
+                    <div class="flex items-center justify-center p-4">
+                        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                        <span class="ml-2 text-gray-400 text-sm">Loading history...</span>
+                    </div>
+                </div>
+                <div id="history-table" class="hidden overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-gray-400">
+                                <th class="text-left py-2">#</th>
+                                <th class="text-left py-2">Date Range</th>
+                                <th class="text-right py-2">Rewards</th>
+                                <th class="text-right py-2">Validators</th>
+                                <th class="text-right py-2">Per Val</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Withdrawal History Section -->
+            <div id="withdrawal-section" class="hidden mt-6 bg-gray-800 rounded-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">Withdrawal History</h3>
+                    <button id="load-withdrawals-btn" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700 text-sm font-medium">
+                        Load Withdrawals
+                    </button>
+                </div>
+                <div id="withdrawal-loading" class="hidden">
+                    <div class="flex items-center justify-center p-4">
+                        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                        <span class="ml-2 text-gray-400 text-sm">Loading withdrawals...</span>
+                    </div>
+                </div>
+                <div id="withdrawal-table" class="hidden overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-gray-400">
+                                <th class="text-left py-2">#</th>
+                                <th class="text-left py-2">Date</th>
+                                <th class="text-left py-2">Type</th>
+                                <th class="text-right py-2">Amount</th>
+                                <th class="text-left py-2">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="withdrawal-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -262,6 +348,17 @@ def create_app() -> FastAPI:
         const validatorStatus = document.getElementById('validator-status');
         const apySection = document.getElementById('apy-section');
         const healthSection = document.getElementById('health-section');
+        const historySection = document.getElementById('history-section');
+        const loadHistoryBtn = document.getElementById('load-history-btn');
+        const historyLoading = document.getElementById('history-loading');
+        const historyTable = document.getElementById('history-table');
+        const historyTbody = document.getElementById('history-tbody');
+        const nextDistribution = document.getElementById('next-distribution');
+        const withdrawalSection = document.getElementById('withdrawal-section');
+        const loadWithdrawalsBtn = document.getElementById('load-withdrawals-btn');
+        const withdrawalLoading = document.getElementById('withdrawal-loading');
+        const withdrawalTable = document.getElementById('withdrawal-table');
+        const withdrawalTbody = document.getElementById('withdrawal-tbody');
 
         function formatApy(val) {
             return val !== null && val !== undefined ? val.toFixed(2) + '%' : '--%';
@@ -280,6 +377,17 @@ def create_app() -> FastAPI:
             validatorStatus.classList.add('hidden');
             apySection.classList.add('hidden');
             healthSection.classList.add('hidden');
+            historySection.classList.add('hidden');
+            nextDistribution.classList.add('hidden');
+            historyTable.classList.add('hidden');
+            historyTbody.innerHTML = '';
+            historyLoaded = false;
+            loadHistoryBtn.textContent = 'Load History';
+            withdrawalSection.classList.add('hidden');
+            withdrawalTable.classList.add('hidden');
+            withdrawalTbody.innerHTML = '';
+            withdrawalsLoaded = false;
+            loadWithdrawalsBtn.textContent = 'Load Withdrawals';
             document.getElementById('active-since-row').classList.add('hidden');
             loadDetailsBtn.classList.remove('hidden');
             loadDetailsBtn.disabled = false;
@@ -394,7 +502,23 @@ def create_app() -> FastAPI:
                     document.getElementById('net-apy-28d').textContent = formatApy(data.apy.net_apy_28d);
                     document.getElementById('net-apy-ltd').textContent = formatApy(data.apy.net_apy_ltd);
 
+                    // Show next distribution info if available
+                    if (data.apy.next_distribution_date || data.apy.next_distribution_est_eth) {
+                        if (data.apy.next_distribution_date) {
+                            const nextDate = new Date(data.apy.next_distribution_date);
+                            const options = { year: 'numeric', month: 'short', day: 'numeric' };
+                            document.getElementById('next-dist-date').textContent = nextDate.toLocaleDateString('en-US', options);
+                        }
+                        if (data.apy.next_distribution_est_eth) {
+                            document.getElementById('next-dist-eth').textContent = data.apy.next_distribution_est_eth.toFixed(4);
+                        }
+                        nextDistribution.classList.remove('hidden');
+                    }
+
                     apySection.classList.remove('hidden');
+                    // Show history and withdrawal sections with toggles
+                    historySection.classList.remove('hidden');
+                    withdrawalSection.classList.remove('hidden');
                 }
 
                 // Display Active Since date if available
@@ -569,6 +693,163 @@ def create_app() -> FastAPI:
                 loadDetailsBtn.textContent = 'Failed - Click to Retry';
             } finally {
                 isLoadingDetails = false;
+            }
+        });
+
+        // History button handler
+        let historyLoaded = false;
+        loadHistoryBtn.addEventListener('click', async () => {
+            if (historyLoaded) {
+                // Toggle visibility
+                historyTable.classList.toggle('hidden');
+                loadHistoryBtn.textContent = historyTable.classList.contains('hidden')
+                    ? 'Load History' : 'Hide History';
+                return;
+            }
+
+            const operatorId = document.getElementById('operator-id').textContent;
+            historyLoading.classList.remove('hidden');
+            historyTable.classList.add('hidden');
+
+            try {
+                const response = await fetch(`/api/operator/${operatorId}?detailed=true&history=true`);
+                const data = await response.json();
+
+                historyLoading.classList.add('hidden');
+
+                if (!response.ok || !data.apy || !data.apy.frames) {
+                    historyTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">No history available</td></tr>';
+                    historyTable.classList.remove('hidden');
+                    return;
+                }
+
+                // Populate history table
+                historyTbody.innerHTML = data.apy.frames.map(frame => {
+                    const startDate = new Date(frame.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const endDate = new Date(frame.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const perVal = frame.validator_count > 0 ? (frame.rewards_eth / frame.validator_count).toFixed(6) : '--';
+                    return `<tr class="border-t border-gray-700">
+                        <td class="py-2">${frame.frame_number}</td>
+                        <td class="py-2">${startDate} - ${endDate}</td>
+                        <td class="py-2 text-right text-green-400">${frame.rewards_eth.toFixed(4)}</td>
+                        <td class="py-2 text-right">${frame.validator_count}</td>
+                        <td class="py-2 text-right text-gray-400">${perVal}</td>
+                    </tr>`;
+                }).join('');
+
+                // Add total row
+                const totalEth = data.apy.frames.reduce((sum, f) => sum + f.rewards_eth, 0);
+                historyTbody.innerHTML += `<tr class="border-t-2 border-gray-600 font-bold">
+                    <td class="py-2" colspan="2">Total</td>
+                    <td class="py-2 text-right text-yellow-400">${totalEth.toFixed(4)}</td>
+                    <td class="py-2 text-right">--</td>
+                    <td class="py-2 text-right">--</td>
+                </tr>`;
+
+                historyTable.classList.remove('hidden');
+                historyLoaded = true;
+                loadHistoryBtn.textContent = 'Hide History';
+            } catch (err) {
+                historyLoading.classList.add('hidden');
+                historyTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-red-400">Failed to load history</td></tr>';
+                historyTable.classList.remove('hidden');
+            }
+        });
+
+        // Withdrawal button handler
+        let withdrawalsLoaded = false;
+        loadWithdrawalsBtn.addEventListener('click', async () => {
+            if (withdrawalsLoaded) {
+                // Toggle visibility
+                withdrawalTable.classList.toggle('hidden');
+                loadWithdrawalsBtn.textContent = withdrawalTable.classList.contains('hidden')
+                    ? 'Load Withdrawals' : 'Hide Withdrawals';
+                return;
+            }
+
+            const operatorId = document.getElementById('operator-id').textContent;
+            withdrawalLoading.classList.remove('hidden');
+            withdrawalTable.classList.add('hidden');
+
+            try {
+                const response = await fetch(`/api/operator/${operatorId}?withdrawals=true`);
+                const data = await response.json();
+
+                withdrawalLoading.classList.add('hidden');
+
+                if (!response.ok || !data.withdrawals || data.withdrawals.length === 0) {
+                    withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">No withdrawals found</td></tr>';
+                    withdrawalTable.classList.remove('hidden');
+                    withdrawalsLoaded = true;
+                    loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
+                    return;
+                }
+
+                // Populate withdrawal table
+                withdrawalTbody.innerHTML = data.withdrawals.map((w, i) => {
+                    const date = new Date(w.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const wType = w.withdrawal_type || 'stETH';
+                    // For unstETH, show claimed ETH if available, otherwise show stETH value
+                    let amount, amountClass;
+                    if (wType === 'unstETH' && w.claimed_eth !== null) {
+                        amount = w.claimed_eth.toFixed(4) + ' ETH';
+                        amountClass = 'text-green-400';
+                    } else {
+                        amount = w.eth_value.toFixed(4) + ' stETH';
+                        amountClass = 'text-green-400';
+                    }
+                    // Status for unstETH
+                    let status;
+                    if (wType === 'unstETH' && w.status) {
+                        const statusColors = {
+                            'pending': 'text-yellow-400',
+                            'finalized': 'text-blue-400',
+                            'claimed': 'text-green-400',
+                        };
+                        const statusLabels = {
+                            'pending': 'Pending',
+                            'finalized': 'Ready',
+                            'claimed': 'Claimed',
+                        };
+                        status = `<span class="${statusColors[w.status] || 'text-gray-400'}">${statusLabels[w.status] || w.status}</span>`;
+                    } else if (wType !== 'unstETH') {
+                        status = '<span class="text-green-400">Claimed</span>';
+                    } else {
+                        status = '--';
+                    }
+                    return `<tr class="border-t border-gray-700">
+                        <td class="py-2">${i + 1}</td>
+                        <td class="py-2">${date}</td>
+                        <td class="py-2"><span class="${wType === 'unstETH' ? 'text-purple-400' : 'text-blue-400'}">${wType}</span></td>
+                        <td class="py-2 text-right ${amountClass}">${amount}</td>
+                        <td class="py-2">${status}</td>
+                    </tr>`;
+                }).join('');
+
+                // Add total row
+                const stethTotal = data.withdrawals
+                    .filter(w => w.withdrawal_type !== 'unstETH')
+                    .reduce((sum, w) => sum + w.eth_value, 0);
+                const ethTotal = data.withdrawals
+                    .filter(w => w.withdrawal_type === 'unstETH' && w.claimed_eth !== null)
+                    .reduce((sum, w) => sum + w.claimed_eth, 0);
+                let totalStr = '';
+                if (stethTotal > 0) totalStr += stethTotal.toFixed(4) + ' stETH';
+                if (ethTotal > 0) totalStr += (totalStr ? ' + ' : '') + ethTotal.toFixed(4) + ' ETH';
+                if (!totalStr) totalStr = '0';
+
+                withdrawalTbody.innerHTML += `<tr class="border-t-2 border-gray-600 font-bold">
+                    <td class="py-2" colspan="3">Total Claimed</td>
+                    <td class="py-2 text-right text-yellow-400" colspan="2">${totalStr}</td>
+                </tr>`;
+
+                withdrawalTable.classList.remove('hidden');
+                withdrawalsLoaded = true;
+                loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
+            } catch (err) {
+                withdrawalLoading.classList.add('hidden');
+                withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-red-400">Failed to load withdrawals</td></tr>';
+                withdrawalTable.classList.remove('hidden');
             }
         });
     </script>

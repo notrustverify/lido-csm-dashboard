@@ -136,3 +136,162 @@ class EtherscanProvider:
                     continue
 
             return sorted(results, key=lambda x: x["block"])
+
+    async def get_withdrawal_requested_events(
+        self,
+        contract_address: str,
+        requestor: str,
+        owner: str,
+        from_block: int,
+        to_block: str | int = "latest",
+    ) -> list[dict]:
+        """Query WithdrawalRequested events from Etherscan.
+
+        Args:
+            contract_address: WithdrawalQueue contract address
+            requestor: Address that requested the withdrawal (CSAccounting)
+            owner: Address that owns the unstETH NFT (reward_address)
+            from_block: Starting block
+            to_block: Ending block
+
+        Returns:
+            List of withdrawal request events
+        """
+        if not self.api_key:
+            return []
+
+        # Event: WithdrawalRequested(uint256 indexed requestId, address indexed requestor,
+        #                            address indexed owner, uint256 amountOfStETH, uint256 amountOfShares)
+        topic0 = (
+            "0x"
+            + Web3.keccak(
+                text="WithdrawalRequested(uint256,address,address,uint256,uint256)"
+            ).hex()
+        )
+        # topic1 is indexed requestId - not filtering on this
+        # topic2 is indexed 'requestor' address (padded to 32 bytes)
+        topic2 = "0x" + requestor.lower().replace("0x", "").zfill(64)
+        # topic3 is indexed 'owner' address (padded to 32 bytes)
+        topic3 = "0x" + owner.lower().replace("0x", "").zfill(64)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                self.BASE_URL,
+                params={
+                    "chainid": 1,
+                    "module": "logs",
+                    "action": "getLogs",
+                    "address": contract_address,
+                    "topic0": topic0,
+                    "topic2": topic2,
+                    "topic3": topic3,
+                    "topic0_2_opr": "and",
+                    "topic2_3_opr": "and",
+                    "fromBlock": from_block,
+                    "toBlock": to_block,
+                    "apikey": self.api_key,
+                },
+            )
+
+            data = response.json()
+            if data.get("status") != "1":
+                return []
+
+            results = []
+            for log in data.get("result", []):
+                try:
+                    # requestId is topic1 (indexed)
+                    request_id = int(log["topics"][1], 16)
+                    # amountOfStETH and amountOfShares are in data field
+                    raw_data = log["data"]
+                    # Each uint256 is 64 hex chars (32 bytes)
+                    amount_steth = int(raw_data[2:66], 16)
+                    amount_shares = int(raw_data[66:130], 16)
+
+                    results.append(
+                        {
+                            "request_id": request_id,
+                            "block": int(log["blockNumber"], 16),
+                            "tx_hash": log["transactionHash"],
+                            "amount_steth": amount_steth,
+                            "amount_shares": amount_shares,
+                        }
+                    )
+                except (ValueError, TypeError, IndexError):
+                    continue
+
+            return sorted(results, key=lambda x: x["block"])
+
+    async def get_withdrawal_claimed_events(
+        self,
+        contract_address: str,
+        receiver: str,
+        from_block: int,
+        to_block: str | int = "latest",
+    ) -> list[dict]:
+        """Query WithdrawalClaimed events from Etherscan.
+
+        Args:
+            contract_address: WithdrawalQueue contract address
+            receiver: Address that received the ETH (reward_address)
+            from_block: Starting block
+            to_block: Ending block
+
+        Returns:
+            List of withdrawal claim events
+        """
+        if not self.api_key:
+            return []
+
+        # Event: WithdrawalClaimed(uint256 indexed requestId, address indexed owner,
+        #                          address indexed receiver, uint256 amountOfETH)
+        topic0 = (
+            "0x"
+            + Web3.keccak(
+                text="WithdrawalClaimed(uint256,address,address,uint256)"
+            ).hex()
+        )
+        # topic3 is indexed 'receiver' address (padded to 32 bytes)
+        topic3 = "0x" + receiver.lower().replace("0x", "").zfill(64)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                self.BASE_URL,
+                params={
+                    "chainid": 1,
+                    "module": "logs",
+                    "action": "getLogs",
+                    "address": contract_address,
+                    "topic0": topic0,
+                    "topic3": topic3,
+                    "topic0_3_opr": "and",
+                    "fromBlock": from_block,
+                    "toBlock": to_block,
+                    "apikey": self.api_key,
+                },
+            )
+
+            data = response.json()
+            if data.get("status") != "1":
+                return []
+
+            results = []
+            for log in data.get("result", []):
+                try:
+                    # requestId is topic1 (indexed)
+                    request_id = int(log["topics"][1], 16)
+                    # amountOfETH is in data field
+                    amount_eth = int(log["data"], 16) / 10**18
+
+                    results.append(
+                        {
+                            "request_id": request_id,
+                            "tx_hash": log["transactionHash"],
+                            "amount_eth": amount_eth,
+                            "block": int(log["blockNumber"], 16),
+                        }
+                    )
+                except (ValueError, TypeError, IndexError):
+                    continue
+
+            return sorted(results, key=lambda x: x["block"])

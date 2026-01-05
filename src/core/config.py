@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     csfeedistributor_address: str = "0xD99CC66fEC647E68294C6477B40fC7E0F6F618D0"
     csstrikes_address: str = "0xaa328816027F2D32B9F56d190BC9Fa4A5C07637f"
     steth_address: str = "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"
+    withdrawal_queue_address: str = "0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1"
 
 
 @lru_cache

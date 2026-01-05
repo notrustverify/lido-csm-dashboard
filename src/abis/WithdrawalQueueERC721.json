@@ -1,0 +1,47 @@
+[
+  {
+    "name": "WithdrawalRequested",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "requestId", "type": "uint256"},
+      {"indexed": true, "name": "requestor", "type": "address"},
+      {"indexed": true, "name": "owner", "type": "address"},
+      {"indexed": false, "name": "amountOfStETH", "type": "uint256"},
+      {"indexed": false, "name": "amountOfShares", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "WithdrawalClaimed",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "requestId", "type": "uint256"},
+      {"indexed": true, "name": "owner", "type": "address"},
+      {"indexed": true, "name": "receiver", "type": "address"},
+      {"indexed": false, "name": "amountOfETH", "type": "uint256"}
+    ]
+  },
+  {
+    "name": "getWithdrawalStatus",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "_requestIds", "type": "uint256[]"}
+    ],
+    "outputs": [
+      {
+        "name": "statuses",
+        "type": "tuple[]",
+        "components": [
+          {"name": "amountOfStETH", "type": "uint256"},
+          {"name": "amountOfShares", "type": "uint256"},
+          {"name": "owner", "type": "address"},
+          {"name": "timestamp", "type": "uint256"},
+          {"name": "isFinalized", "type": "bool"},
+          {"name": "isClaimed", "type": "bool"}
+        ]
+      }
+    ]
+  }
+]

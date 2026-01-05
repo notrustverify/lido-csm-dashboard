@@ -70,6 +70,16 @@ class WithdrawalEvent(BaseModel):
     eth_value: float
     tx_hash: str
 
+    # Withdrawal type: "stETH" (direct transfer) or "unstETH" (withdrawal NFT)
+    withdrawal_type: str = "stETH"
+
+    # unstETH-specific fields (only populated for unstETH type)
+    request_id: int | None = None
+    status: str | None = None  # "pending", "finalized", or "claimed"
+    claimed_eth: float | None = None  # Actual ETH received when claimed
+    claim_tx_hash: str | None = None  # Transaction where claim occurred
+    claim_timestamp: str | None = None  # When the claim happened
+
 
 class APYMetrics(BaseModel):
     """APY calculations for an operator.
