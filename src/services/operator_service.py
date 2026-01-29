@@ -1,6 +1,9 @@
 """Main service for computing operator rewards."""
 
+import logging
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from ..core.types import (
     APYMetrics,
@@ -271,9 +274,9 @@ class OperatorService:
                             daily_rate = current_eth / Decimal(current_days)
                             next_distribution_est_eth = float(daily_rate * Decimal(28))
 
-            except Exception:
+            except Exception as e:
                 # If historical APY calculation fails, continue without it
-                pass
+                logger.warning(f"Historical APY calculation failed for operator {operator_id}: {e}")
 
         # 2. Bond APY (stETH protocol rebase rate)
         steth_data = await self.lido_api.get_steth_apr()
@@ -330,12 +333,13 @@ class OperatorService:
                             prev_bond = self.onchain.calculate_required_bond(
                                 prev_frame.validator_count, curve_id
                             )
+                            # Keep calculation in Decimal for precision
                             previous_bond_eth = round(
-                                float(prev_bond) * (prev_apr / 100) * (prev_days / 365), 6
+                                float(prev_bond * Decimal(prev_apr / 100) * Decimal(prev_days / 365)), 6
                             )
                         else:
                             previous_bond_eth = round(
-                                float(bond_eth) * (prev_apr / 100) * (prev_days / 365), 6
+                                float(bond_eth * Decimal(prev_apr / 100) * Decimal(prev_days / 365)), 6
                             )
 
             # Current frame bond earnings
@@ -353,8 +357,9 @@ class OperatorService:
                         curr_apr = bond_apy
                     if curr_apr is not None:
                         current_bond_apr = round(curr_apr, 2)
+                        # Keep calculation in Decimal for precision
                         current_bond_eth = round(
-                            float(bond_eth) * (curr_apr / 100) * (curr_days / 365), 6
+                            float(bond_eth * Decimal(curr_apr / 100) * Decimal(curr_days / 365)), 6
                         )
 
             # Lifetime bond earnings (sum of all frame durations with per-frame APR)
@@ -380,21 +385,22 @@ class OperatorService:
 
                         if f_apr is not None:
                             # When include_history=True and we have validator count, use per-frame bond
-                            if include_history and f.validator_count > 0:
+                            if include_history and f.validator_count > 0 and f_days > 0:
                                 f_bond = self.onchain.calculate_required_bond(
                                     f.validator_count, curve_id
                                 )
-                                lifetime_bond_sum += float(f_bond) * (f_apr / 100) * (f_days / 365)
+                                # Keep calculations in Decimal for precision
+                                lifetime_bond_sum += float(f_bond * Decimal(f_apr / 100) * Decimal(f_days / 365))
 
                                 # Calculate per-frame reward APY for weighted average
                                 f_eth = await self.onchain.shares_to_eth(f.distributed_rewards)
                                 if f_bond > 0:
-                                    f_reward_apy = float(f_eth / f_bond) * (365.0 / f_days) * 100
+                                    f_reward_apy = float((f_eth / f_bond) * Decimal(365.0 / f_days) * Decimal(100))
                                     frame_reward_apys.append(f_reward_apy)
                                     frame_bond_apys.append(f_apr)
                                     frame_durations.append(f_days)
-                            else:
-                                lifetime_bond_sum += float(bond_eth) * (f_apr / 100) * (f_days / 365)
+                            elif f_days > 0:
+                                lifetime_bond_sum += float(bond_eth * Decimal(f_apr / 100) * Decimal(f_days / 365))
 
                 if lifetime_bond_sum > 0:
                     lifetime_bond_eth = round(lifetime_bond_sum, 6)
@@ -532,9 +538,9 @@ class OperatorService:
                 max_strikes=summary.get("max_strikes", 0),
                 strike_threshold=summary.get("strike_threshold", 3),
             )
-        except Exception:
+        except Exception as e:
             # If strikes fetch fails, continue with empty summary
-            pass
+            logger.warning(f"Failed to fetch strikes for operator {operator_id}: {e}")
 
         return HealthStatus(
             bond_healthy=bond_healthy,
@@ -562,7 +568,8 @@ class OperatorService:
         """
         try:
             log_history = await self.onchain.get_distribution_log_history()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to fetch distribution log history: {e}")
             return []
 
         if not log_history:
@@ -583,8 +590,9 @@ class OperatorService:
                         "start": start_date.strftime("%b %d"),
                         "end": end_date.strftime("%b %d"),
                     })
-            except Exception:
+            except Exception as e:
                 # Skip frames we can't fetch
+                logger.debug(f"Failed to fetch frame data for CID {entry.get('logCid', 'unknown')}: {e}")
                 continue
 
         # Pad to ensure we always have `count` entries (for UI consistency)
@@ -615,7 +623,8 @@ class OperatorService:
 
             validators = await self.beacon.get_validators_by_pubkeys(pubkeys)
             return get_earliest_activation(validators)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to get active_since for operator {operator_id}: {e}")
             return None
 
     async def get_withdrawal_history(self, operator_id: int) -> list[WithdrawalEvent]:
@@ -643,5 +652,6 @@ class OperatorService:
                 )
                 for e in events
             ]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to fetch withdrawal history for operator {operator_id}: {e}")
             return []
