@@ -51,6 +51,25 @@ def create_app() -> FastAPI:
             </div>
         </form>
 
+        <!-- Saved Operators Section -->
+        <div id="saved-operators-section" class="mb-8 hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">Saved Operators</h2>
+                <button id="refresh-all-btn" class="px-4 py-2 bg-green-600 rounded hover:bg-green-700 text-sm font-medium">
+                    Refresh All
+                </button>
+            </div>
+            <div id="saved-operators-loading" class="hidden">
+                <div class="flex items-center justify-center p-4">
+                    <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-green-500"></div>
+                    <span class="ml-3 text-gray-400">Loading saved operators...</span>
+                </div>
+            </div>
+            <div id="saved-operators-list" class="grid gap-4">
+                <!-- Populated by JavaScript -->
+            </div>
+        </div>
+
         <div id="loading" class="hidden">
             <div class="flex items-center justify-center p-8">
                 <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
@@ -64,9 +83,15 @@ def create_app() -> FastAPI:
 
         <div id="results" class="hidden">
             <div class="bg-gray-800 rounded-lg p-6 mb-6">
-                <h2 class="text-xl font-bold mb-2">
-                    Operator #<span id="operator-id"></span>
-                </h2>
+                <div class="flex justify-between items-start">
+                    <h2 class="text-xl font-bold mb-2">
+                        Operator #<span id="operator-id"></span>
+                    </h2>
+                    <button id="save-operator-btn"
+                            class="px-4 py-2 bg-yellow-600 rounded hover:bg-yellow-700 text-sm font-medium transition-colors">
+                        Save
+                    </button>
+                </div>
                 <div id="active-since-row" class="hidden text-sm text-green-400 mb-3">
                     Active Since: <span id="active-since"></span>
                 </div>
@@ -852,6 +877,261 @@ def create_app() -> FastAPI:
                 withdrawalTable.classList.remove('hidden');
             }
         });
+
+        // ===== SAVED OPERATORS FUNCTIONALITY =====
+        const savedOperatorsSection = document.getElementById('saved-operators-section');
+        const savedOperatorsList = document.getElementById('saved-operators-list');
+        const savedOperatorsLoading = document.getElementById('saved-operators-loading');
+        const refreshAllBtn = document.getElementById('refresh-all-btn');
+        const saveOperatorBtn = document.getElementById('save-operator-btn');
+
+        let currentOperatorSaved = false;
+
+        // Format relative time
+        function formatRelativeTime(isoString) {
+            const date = new Date(isoString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 1) return 'just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffHours < 24) return `${diffHours}h ago`;
+            return `${diffDays}d ago`;
+        }
+
+        // Render a single saved operator card
+        function renderSavedOperatorCard(op) {
+            const claimable = parseFloat(op.rewards?.total_claimable_eth ?? 0).toFixed(4);
+            const validators = op.validators?.active ?? 0;
+            const updatedAt = op._updated_at ? formatRelativeTime(op._updated_at) : 'unknown';
+
+            // Health indicator
+            let healthDot = '<span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span>';
+            if (op.health?.has_issues) {
+                if (!op.health.bond_healthy || op.health.slashed_validators_count > 0 || op.health.stuck_validators_count > 0) {
+                    healthDot = '<span class="w-2 h-2 rounded-full bg-red-500 inline-block"></span>';
+                } else {
+                    healthDot = '<span class="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span>';
+                }
+            }
+
+            return `
+                <div class="bg-gray-800 rounded-lg p-4 flex justify-between items-center" data-operator-id="${op.operator_id}">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            ${healthDot}
+                            <span class="font-bold">Operator #${op.operator_id}</span>
+                            <span class="text-gray-500 text-xs">Updated ${updatedAt}</span>
+                        </div>
+                        <div class="text-sm text-gray-400">
+                            <span class="text-green-400">${validators}</span> active validators |
+                            <span class="text-yellow-400">${claimable} ETH</span> claimable
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="viewSavedOperator(${op.operator_id})"
+                                class="px-3 py-1 bg-blue-600 rounded hover:bg-blue-700 text-sm">
+                            View
+                        </button>
+                        <button onclick="refreshSavedOperator(${op.operator_id}, this)"
+                                class="px-3 py-1 bg-green-600 rounded hover:bg-green-700 text-sm">
+                            Refresh
+                        </button>
+                        <button onclick="removeSavedOperator(${op.operator_id}, this)"
+                                class="px-3 py-1 bg-red-600 rounded hover:bg-red-700 text-sm">
+                            Remove
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Load saved operators on page load
+        async function loadSavedOperators() {
+            try {
+                const response = await fetch('/api/saved-operators');
+                const data = await response.json();
+
+                if (data.operators && data.operators.length > 0) {
+                    savedOperatorsList.innerHTML = data.operators.map(renderSavedOperatorCard).join('');
+                    savedOperatorsSection.classList.remove('hidden');
+                } else {
+                    savedOperatorsSection.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error('Failed to load saved operators:', err);
+            }
+        }
+
+        // View a saved operator (populate the main view)
+        window.viewSavedOperator = async function(operatorId) {
+            document.getElementById('address').value = operatorId;
+            form.dispatchEvent(new Event('submit'));
+        };
+
+        // Refresh a saved operator
+        window.refreshSavedOperator = async function(operatorId, btn) {
+            const originalText = btn.textContent;
+            btn.textContent = '...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST' });
+                if (response.ok) {
+                    const data = await response.json();
+                    // Update the card in the list
+                    const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
+                    if (card && data.data) {
+                        data.data._updated_at = new Date().toISOString();
+                        card.outerHTML = renderSavedOperatorCard(data.data);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to refresh operator:', err);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        };
+
+        // Remove a saved operator
+        window.removeSavedOperator = async function(operatorId, btn) {
+            const originalText = btn.textContent;
+            btn.textContent = '...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE' });
+                if (response.ok) {
+                    const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
+                    if (card) card.remove();
+
+                    // Hide section if no more operators
+                    if (savedOperatorsList.children.length === 0) {
+                        savedOperatorsSection.classList.add('hidden');
+                    }
+
+                    // Update save button if viewing this operator
+                    const currentOpId = document.getElementById('operator-id').textContent;
+                    if (currentOpId == operatorId) {
+                        currentOperatorSaved = false;
+                        updateSaveButton();
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to remove operator:', err);
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        };
+
+        // Refresh all saved operators
+        refreshAllBtn.addEventListener('click', async () => {
+            const originalText = refreshAllBtn.textContent;
+            refreshAllBtn.textContent = 'Refreshing...';
+            refreshAllBtn.disabled = true;
+
+            const cards = savedOperatorsList.querySelectorAll('[data-operator-id]');
+            for (const card of cards) {
+                const operatorId = card.dataset.operatorId;
+                try {
+                    const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST' });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.data) {
+                            data.data._updated_at = new Date().toISOString();
+                            card.outerHTML = renderSavedOperatorCard(data.data);
+                        }
+                    }
+                } catch (err) {
+                    console.error(`Failed to refresh operator ${operatorId}:`, err);
+                }
+            }
+
+            refreshAllBtn.textContent = originalText;
+            refreshAllBtn.disabled = false;
+        });
+
+        // Update save button state
+        function updateSaveButton() {
+            if (currentOperatorSaved) {
+                saveOperatorBtn.textContent = 'Saved';
+                saveOperatorBtn.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
+                saveOperatorBtn.classList.add('bg-gray-600', 'hover:bg-gray-700');
+            } else {
+                saveOperatorBtn.textContent = 'Save';
+                saveOperatorBtn.classList.remove('bg-gray-600', 'hover:bg-gray-700');
+                saveOperatorBtn.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
+            }
+        }
+
+        // Check if current operator is saved
+        async function checkIfOperatorSaved(operatorId) {
+            try {
+                const response = await fetch(`/api/operator/${operatorId}/saved`);
+                const data = await response.json();
+                currentOperatorSaved = data.saved;
+                updateSaveButton();
+            } catch (err) {
+                console.error('Failed to check if operator is saved:', err);
+            }
+        }
+
+        // Save/unsave operator button handler
+        saveOperatorBtn.addEventListener('click', async () => {
+            const operatorId = document.getElementById('operator-id').textContent;
+            if (!operatorId) return;
+
+            saveOperatorBtn.disabled = true;
+            saveOperatorBtn.textContent = '...';
+
+            try {
+                if (currentOperatorSaved) {
+                    // Unsave
+                    const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE' });
+                    if (response.ok) {
+                        currentOperatorSaved = false;
+                        // Remove from saved list
+                        const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
+                        if (card) card.remove();
+                        if (savedOperatorsList.children.length === 0) {
+                            savedOperatorsSection.classList.add('hidden');
+                        }
+                    }
+                } else {
+                    // Save
+                    const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'POST' });
+                    if (response.ok) {
+                        currentOperatorSaved = true;
+                        // Reload saved operators to show the new one
+                        await loadSavedOperators();
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to save/unsave operator:', err);
+            } finally {
+                saveOperatorBtn.disabled = false;
+                updateSaveButton();
+            }
+        });
+
+        // Modify form submit to check if operator is saved
+        const originalFormSubmit = form.onsubmit;
+        form.addEventListener('submit', async (e) => {
+            // Wait a bit for the results to load, then check if saved
+            setTimeout(async () => {
+                const operatorId = document.getElementById('operator-id').textContent;
+                if (operatorId) {
+                    await checkIfOperatorSaved(operatorId);
+                }
+            }, 100);
+        });
+
+        // Load saved operators on page load
+        loadSavedOperators();
     </script>
 </body>
 </html>

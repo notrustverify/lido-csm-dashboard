@@ -1,6 +1,7 @@
 """Configuration management using pydantic-settings."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,6 +31,9 @@ class Settings(BaseSettings):
 
     # Cache Settings
     cache_ttl_seconds: int = 300  # 5 minutes
+
+    # Database Settings
+    database_path: Path = Path.home() / ".cache" / "csm-dashboard" / "operators.db"
 
     # Contract Addresses (Mainnet)
     csmodule_address: str = "0xdA7dE2ECdDfccC6c3AF10108Db212ACBBf9EA83F"
