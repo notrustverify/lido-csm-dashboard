@@ -1079,18 +1079,28 @@ def create_app() -> FastAPI:
         let currentOperatorSaved = false;
         let savedOperatorsData = {};  // Store operator data by ID for quick lookup
 
-        // Format relative time
+        // Format relative time with precision
         function formatRelativeTime(isoString) {
             const date = new Date(isoString);
             const now = new Date();
             const diffMs = now - date;
+            const diffSecs = Math.floor(diffMs / 1000);
             const diffMins = Math.floor(diffMs / 60000);
             const diffHours = Math.floor(diffMs / 3600000);
             const diffDays = Math.floor(diffMs / 86400000);
 
-            if (diffMins < 1) return 'just now';
-            if (diffMins < 60) return `${diffMins}m ago`;
-            if (diffHours < 24) return `${diffHours}h ago`;
+            if (diffSecs < 60) return 'just now';
+            if (diffMins < 60) return `${diffMins} min ago`;
+            if (diffHours < 24) {
+                const mins = diffMins % 60;
+                if (mins === 0) return `${diffHours}h ago`;
+                return `${diffHours}h ${mins}m ago`;
+            }
+            if (diffDays < 7) {
+                const hours = diffHours % 24;
+                if (hours === 0) return `${diffDays}d ago`;
+                return `${diffDays}d ${hours}h ago`;
+            }
             return `${diffDays}d ago`;
         }
 
