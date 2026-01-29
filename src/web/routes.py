@@ -258,7 +258,7 @@ async def list_saved_operators():
 async def save_operator_endpoint(identifier: str):
     """Save an operator to the follow list.
 
-    Fetches current operator data and stores it in the database.
+    Fetches current operator data (including history and withdrawals) and stores it in the database.
     """
     service = OperatorService()
 
@@ -272,8 +272,13 @@ async def save_operator_endpoint(identifier: str):
     else:
         raise HTTPException(status_code=400, detail="Invalid identifier format")
 
-    # Fetch current operator data
-    rewards = await service.get_operator_by_id(operator_id, include_validators=True)
+    # Fetch current operator data with history and withdrawals
+    rewards = await service.get_operator_by_id(
+        operator_id,
+        include_validators=True,
+        include_history=True,
+        include_withdrawals=True,
+    )
     if rewards is None:
         raise HTTPException(status_code=404, detail="Operator not found")
 
@@ -324,6 +329,21 @@ async def save_operator_endpoint(identifier: str):
             "next_distribution_date": rewards.apy.next_distribution_date,
             "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
         }
+        # Include distribution history frames
+        if rewards.apy.frames:
+            data["apy"]["frames"] = [
+                {
+                    "frame_number": f.frame_number,
+                    "start_date": f.start_date,
+                    "end_date": f.end_date,
+                    "rewards_eth": f.rewards_eth,
+                    "rewards_shares": f.rewards_shares,
+                    "duration_days": f.duration_days,
+                    "validator_count": f.validator_count,
+                    "apy": f.apy,
+                }
+                for f in rewards.apy.frames
+            ]
 
     if rewards.health:
         data["health"] = {
@@ -342,6 +362,25 @@ async def save_operator_endpoint(identifier: str):
             },
             "has_issues": rewards.health.has_issues,
         }
+
+    # Include withdrawal history
+    if rewards.withdrawals:
+        data["withdrawals"] = [
+            {
+                "block_number": w.block_number,
+                "timestamp": w.timestamp,
+                "shares": w.shares,
+                "eth_value": w.eth_value,
+                "tx_hash": w.tx_hash,
+                "withdrawal_type": w.withdrawal_type,
+                "request_id": w.request_id,
+                "status": w.status,
+                "claimed_eth": w.claimed_eth,
+                "claim_tx_hash": w.claim_tx_hash,
+                "claim_timestamp": w.claim_timestamp,
+            }
+            for w in rewards.withdrawals
+        ]
 
     # Save to database
     await save_operator(operator_id, data)
@@ -391,7 +430,7 @@ async def check_operator_saved(identifier: str):
 async def refresh_operator_endpoint(identifier: str):
     """Refresh the cached data for a saved operator.
 
-    Fetches fresh data from APIs and updates the database.
+    Fetches fresh data (including history and withdrawals) from APIs and updates the database.
     """
     service = OperatorService()
 
@@ -409,8 +448,13 @@ async def refresh_operator_endpoint(identifier: str):
     if not await is_operator_saved(operator_id):
         raise HTTPException(status_code=404, detail="Operator not in saved list")
 
-    # Fetch fresh data
-    rewards = await service.get_operator_by_id(operator_id, include_validators=True)
+    # Fetch fresh data with history and withdrawals
+    rewards = await service.get_operator_by_id(
+        operator_id,
+        include_validators=True,
+        include_history=True,
+        include_withdrawals=True,
+    )
     if rewards is None:
         raise HTTPException(status_code=404, detail="Operator not found")
 
@@ -461,6 +505,21 @@ async def refresh_operator_endpoint(identifier: str):
             "next_distribution_date": rewards.apy.next_distribution_date,
             "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
         }
+        # Include distribution history frames
+        if rewards.apy.frames:
+            data["apy"]["frames"] = [
+                {
+                    "frame_number": f.frame_number,
+                    "start_date": f.start_date,
+                    "end_date": f.end_date,
+                    "rewards_eth": f.rewards_eth,
+                    "rewards_shares": f.rewards_shares,
+                    "duration_days": f.duration_days,
+                    "validator_count": f.validator_count,
+                    "apy": f.apy,
+                }
+                for f in rewards.apy.frames
+            ]
 
     if rewards.health:
         data["health"] = {
@@ -479,6 +538,25 @@ async def refresh_operator_endpoint(identifier: str):
             },
             "has_issues": rewards.health.has_issues,
         }
+
+    # Include withdrawal history
+    if rewards.withdrawals:
+        data["withdrawals"] = [
+            {
+                "block_number": w.block_number,
+                "timestamp": w.timestamp,
+                "shares": w.shares,
+                "eth_value": w.eth_value,
+                "tx_hash": w.tx_hash,
+                "withdrawal_type": w.withdrawal_type,
+                "request_id": w.request_id,
+                "status": w.status,
+                "claimed_eth": w.claimed_eth,
+                "claim_tx_hash": w.claim_tx_hash,
+                "claim_timestamp": w.claim_timestamp,
+            }
+            for w in rewards.withdrawals
+        ]
 
     # Update in database
     await update_operator_data(operator_id, data)

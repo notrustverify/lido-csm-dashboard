@@ -385,6 +385,10 @@ def create_app() -> FastAPI:
         const withdrawalTable = document.getElementById('withdrawal-table');
         const withdrawalTbody = document.getElementById('withdrawal-tbody');
 
+        // State variables for history/withdrawal loading
+        let historyLoaded = false;
+        let withdrawalsLoaded = false;
+
         function formatApy(val) {
             return val !== null && val !== undefined ? val.toFixed(2) + '%' : '--%';
         }
@@ -552,6 +556,86 @@ def create_app() -> FastAPI:
                 }
 
                 healthSection.classList.remove('hidden');
+            }
+
+            // Distribution History (if frames available in cached data)
+            if (data.apy?.frames && data.apy.frames.length > 0) {
+                historyTbody.innerHTML = data.apy.frames.map(frame => {
+                    const startDate = new Date(frame.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const endDate = new Date(frame.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const perVal = frame.validator_count > 0 ? (frame.rewards_eth / frame.validator_count).toFixed(6) : '--';
+                    return `<tr class="border-t border-gray-700">
+                        <td class="py-2">${frame.frame_number}</td>
+                        <td class="py-2">${startDate} - ${endDate}</td>
+                        <td class="py-2 text-right text-green-400">${frame.rewards_eth.toFixed(4)}</td>
+                        <td class="py-2 text-right">${frame.validator_count}</td>
+                        <td class="py-2 text-right text-gray-400">${perVal}</td>
+                    </tr>`;
+                }).join('');
+
+                // Add total row
+                const totalEth = data.apy.frames.reduce((sum, f) => sum + f.rewards_eth, 0);
+                historyTbody.innerHTML += `<tr class="border-t-2 border-gray-600 font-bold">
+                    <td class="py-2" colspan="2">Total</td>
+                    <td class="py-2 text-right text-yellow-400">${totalEth.toFixed(4)}</td>
+                    <td class="py-2 text-right">--</td>
+                    <td class="py-2 text-right">--</td>
+                </tr>`;
+
+                historyTable.classList.remove('hidden');
+                historyLoaded = true;
+                loadHistoryBtn.textContent = 'Hide History';
+            }
+
+            // Withdrawal History (if withdrawals available in cached data)
+            if (data.withdrawals && data.withdrawals.length > 0) {
+                withdrawalTbody.innerHTML = data.withdrawals.map((w, i) => {
+                    const date = new Date(w.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const wType = w.withdrawal_type || 'stETH';
+                    let amount, amountClass;
+                    if (wType === 'unstETH' && w.claimed_eth !== null) {
+                        amount = w.claimed_eth.toFixed(4) + ' ETH';
+                        amountClass = 'text-green-400';
+                    } else {
+                        amount = w.eth_value.toFixed(4) + ' stETH';
+                        amountClass = 'text-green-400';
+                    }
+                    let status;
+                    if (wType === 'unstETH' && w.status) {
+                        const statusColors = {
+                            'pending': 'text-yellow-400',
+                            'finalized': 'text-blue-400',
+                            'claimed': 'text-green-400',
+                        };
+                        const statusLabels = {
+                            'pending': 'Pending',
+                            'finalized': 'Ready',
+                            'claimed': 'Claimed',
+                        };
+                        status = `<span class="${statusColors[w.status] || 'text-gray-400'}">${statusLabels[w.status] || w.status}</span>`;
+                    } else if (wType !== 'unstETH') {
+                        status = '<span class="text-green-400">Claimed</span>';
+                    } else {
+                        status = '--';
+                    }
+                    return `<tr class="border-t border-gray-700">
+                        <td class="py-2">${i + 1}</td>
+                        <td class="py-2">${date}</td>
+                        <td class="py-2">${wType}</td>
+                        <td class="py-2 text-right ${amountClass}">${amount}</td>
+                        <td class="py-2">${status}</td>
+                    </tr>`;
+                }).join('');
+
+                withdrawalTable.classList.remove('hidden');
+                withdrawalsLoaded = true;
+                loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
+            } else if (data.withdrawals && data.withdrawals.length === 0) {
+                // Explicit empty withdrawals
+                withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">No withdrawals found</td></tr>';
+                withdrawalTable.classList.remove('hidden');
+                withdrawalsLoaded = true;
+                loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
             }
         }
 
@@ -831,7 +915,6 @@ def create_app() -> FastAPI:
         });
 
         // History button handler
-        let historyLoaded = false;
         loadHistoryBtn.addEventListener('click', async () => {
             if (historyLoaded) {
                 // Toggle visibility
@@ -891,7 +974,6 @@ def create_app() -> FastAPI:
         });
 
         // Withdrawal button handler
-        let withdrawalsLoaded = false;
         loadWithdrawalsBtn.addEventListener('click', async () => {
             if (withdrawalsLoaded) {
                 // Toggle visibility
