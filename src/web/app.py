@@ -969,7 +969,7 @@ def create_app() -> FastAPI:
         // View a saved operator (populate the main view)
         window.viewSavedOperator = async function(operatorId) {
             document.getElementById('address').value = operatorId;
-            form.dispatchEvent(new Event('submit'));
+            form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         };
 
         // Refresh a saved operator
