@@ -279,22 +279,16 @@ class OperatorService:
         steth_data = await self.lido_api.get_steth_apr()
         bond_apy = steth_data.get("apr")
 
-        # 3. Net APY calculations
+        # 3. Net APY calculations (initialized here, calculated after historical APR section)
         net_apy_28d = None
         net_apy_ltd = None
-
-        # Current frame net APY (historical_reward_apy_28d is basically current frame APY)
-        if historical_reward_apy_28d is not None and bond_apy is not None:
-            net_apy_28d = round(historical_reward_apy_28d + bond_apy, 2)
-        elif bond_apy is not None:
-            net_apy_28d = round(bond_apy, 2)
 
         # Lifetime net APY - intentionally NOT calculated
         # (same reason as historical_reward_apy_ltd - can't accurately calculate without historical bond)
         # net_apy_ltd remains None
 
-        # Previous frame net APY calculation is moved after we know previous_bond_apy
-        # (calculated in section 4 below)
+        # Current frame net APY and Previous frame net APY are calculated in section 4b/4c
+        # after we have historical APR values (current_bond_apr, previous_bond_apy)
 
         # 4. Calculate bond stETH earnings (from stETH rebasing)
         # Formula: bond_eth * (apr / 100) * (duration_days / 365)
@@ -430,6 +424,14 @@ class OperatorService:
             prev_bond_apy_to_use = previous_bond_apy if previous_bond_apy is not None else bond_apy
             if prev_bond_apy_to_use is not None:
                 previous_net_apy = round(previous_distribution_apy + prev_bond_apy_to_use, 2)
+
+        # 4c. Current frame net APY (using historical APR when available, like previous frame)
+        if historical_reward_apy_28d is not None:
+            curr_bond_apy_to_use = current_bond_apr if current_bond_apr is not None else bond_apy
+            if curr_bond_apy_to_use is not None:
+                net_apy_28d = round(historical_reward_apy_28d + curr_bond_apy_to_use, 2)
+        elif bond_apy is not None:
+            net_apy_28d = round(bond_apy, 2)
 
         # 5. Calculate net totals (Rewards + Bond)
         if previous_distribution_eth is not None or previous_bond_eth is not None:
