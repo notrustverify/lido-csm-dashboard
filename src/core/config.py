@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     # Database Settings
     database_path: Path = Path.home() / ".cache" / "csm-dashboard" / "operators.db"
+    # IPFS Gateway Configuration (comma-separated list)
+    # Default: dweb.link (IPFS Foundation), ipfs.io, w3s.link (web3.storage)
+    ipfs_gateways: str = "https://dweb.link/ipfs/,https://ipfs.io/ipfs/,https://w3s.link/ipfs/"
 
     # Contract Addresses (Mainnet)
     csmodule_address: str = "0xdA7dE2ECdDfccC6c3AF10108Db212ACBBf9EA83F"

@@ -58,7 +58,9 @@ class DistributionFrame(BaseModel):
     rewards_shares: int
     duration_days: float
     validator_count: int = 0  # Number of validators in this frame
-    apy: float | None = None  # Annualized for this frame (kept for backwards compat)
+    apy: float | None = None  # Reward APY for this frame (kept for backwards compat)
+    bond_apy: float | None = None  # Bond APY for this frame
+    net_apy: float | None = None  # Net APY (reward + bond) for this frame
 
 
 class WithdrawalEvent(BaseModel):
@@ -143,11 +145,6 @@ class APYMetrics(BaseModel):
     previous_net_total_eth: float | None = None
     current_net_total_eth: float | None = None
     lifetime_net_total_eth: float | None = None
-
-    # Legacy fields (deprecated, kept for backwards compatibility)
-    reward_apy_7d: float | None = None
-    reward_apy_28d: float | None = None
-    net_apy_7d: float | None = None
 
 
 class StrikeSummary(BaseModel):

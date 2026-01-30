@@ -110,6 +110,8 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
                     "duration_days": f.duration_days,
                     "validator_count": f.validator_count,
                     "apy": f.apy,
+                    "bond_apy": f.bond_apy,
+                    "net_apy": f.net_apy,
                 }
                 for f in rewards.apy.frames
             ]
@@ -553,6 +555,9 @@ def rewards(
             history_table.add_column("Rewards (ETH)", style="green", justify="right")
             history_table.add_column("Vals", style="dim", justify="right")
             history_table.add_column("ETH/Val", style="green", justify="right")
+            history_table.add_column("Reward APY", style="green", justify="right")
+            history_table.add_column("Bond APY", style="green", justify="right")
+            history_table.add_column("Net APY", style="bold yellow", justify="right")
 
             # Display oldest first (chronological order)
             for frame in rewards.apy.frames:
@@ -571,6 +576,9 @@ def rewards(
                     f"{frame.rewards_eth:.4f}",
                     str(frame.validator_count),
                     f"{eth_per_val:.6f}",
+                    fmt_apy(frame.apy),
+                    fmt_apy(frame.bond_apy),
+                    fmt_apy(frame.net_apy),
                 )
 
             console.print(history_table)

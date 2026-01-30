@@ -141,6 +141,8 @@ async def get_operator(
                     "duration_days": f.duration_days,
                     "validator_count": f.validator_count,
                     "apy": f.apy,
+                    "bond_apy": f.bond_apy,
+                    "net_apy": f.net_apy,
                 }
                 for f in rewards.apy.frames
             ]

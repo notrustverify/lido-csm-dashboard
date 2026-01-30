@@ -1,6 +1,8 @@
 """IPFS distribution log fetching with persistent caching."""
 
+import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,6 +12,8 @@ from pathlib import Path
 import httpx
 
 from ..core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 # Ethereum Beacon Chain genesis timestamp (Dec 1, 2020 12:00:23 UTC)
@@ -40,20 +44,17 @@ class FrameData:
 class IPFSLogProvider:
     """Fetches and caches historical distribution logs from IPFS."""
 
-    # IPFS gateways to try in order
-    GATEWAYS = [
-        "https://ipfs.io/ipfs/",
-        "https://cloudflare-ipfs.com/ipfs/",
-    ]
-
     # Rate limiting: minimum seconds between gateway requests
     MIN_REQUEST_INTERVAL = 1.0
 
     def __init__(self, cache_dir: Path | None = None):
         self.settings = get_settings()
+        # Use configurable gateways from settings (comma-separated)
+        self.gateways = [g.strip() for g in self.settings.ipfs_gateways.split(",") if g.strip()]
         self.cache_dir = cache_dir or Path.home() / ".cache" / "csm-dashboard" / "ipfs"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._last_request_time = 0.0
+        self._rate_limit_lock = asyncio.Lock()
 
     def _get_cache_path(self, cid: str) -> Path:
         """Get the cache file path for a CID."""
@@ -80,13 +81,14 @@ class IPFSLogProvider:
         except OSError:
             pass  # Cache write failure is non-fatal
 
-    def _rate_limit(self) -> None:
-        """Ensure minimum interval between IPFS gateway requests."""
-        now = time.time()
-        elapsed = now - self._last_request_time
-        if elapsed < self.MIN_REQUEST_INTERVAL:
-            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
-        self._last_request_time = time.time()
+    async def _rate_limit(self) -> None:
+        """Ensure minimum interval between IPFS gateway requests (async-safe)."""
+        async with self._rate_limit_lock:
+            now = time.time()
+            elapsed = now - self._last_request_time
+            if elapsed < self.MIN_REQUEST_INTERVAL:
+                await asyncio.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
+            self._last_request_time = time.time()
 
     async def fetch_log(self, cid: str) -> dict | None:
         """
@@ -100,26 +102,32 @@ class IPFSLogProvider:
         if cached is not None:
             return cached
 
-        # Rate limit gateway requests
-        self._rate_limit()
+        # Rate limit gateway requests (async-safe)
+        await self._rate_limit()
 
         # Try each gateway
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            for gateway in self.GATEWAYS:
+            for gateway in self.gateways:
                 try:
                     url = f"{gateway}{cid}"
                     response = await client.get(url)
                     if response.status_code == 200:
-                        data = response.json()
+                        try:
+                            data = response.json()
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse IPFS JSON from {gateway}: {e}")
+                            continue
                         # The IPFS log is wrapped in a list, unwrap it
                         if isinstance(data, list) and len(data) == 1:
                             data = data[0]
                         # Cache the successful result
                         self._save_to_cache(cid, data)
                         return data
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"IPFS gateway {gateway} failed for CID {cid}: {e}")
                     continue  # Try next gateway
 
+        logger.warning(f"All IPFS gateways failed for CID {cid}")
         return None
 
     def get_operator_frame_rewards(self, log_data: dict, operator_id: int) -> int | None:
@@ -289,9 +297,10 @@ class IPFSLogProvider:
             total_rewards_eth = Decimal(total_rewards_wei) / Decimal(10**18)
 
             # Annualize: (rewards / bond) * (365 / days) * 100
-            apy = float(total_rewards_eth / bond_eth) * (365.0 / total_days) * 100
+            # Keep calculation in Decimal for precision, convert to float only at the end
+            apy = (total_rewards_eth / bond_eth) * Decimal(365) / Decimal(total_days) * Decimal(100)
 
-            results[self._period_name(period)] = round(apy, 2)
+            results[self._period_name(period)] = round(float(apy), 2)
 
         return results
 

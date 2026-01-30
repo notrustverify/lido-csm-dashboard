@@ -1,10 +1,15 @@
 """Fetch and parse the rewards merkle tree from GitHub."""
 
+import json
+import logging
+
 import httpx
 
 from ..core.config import get_settings
 from ..core.types import RewardsInfo
 from .cache import cached
+
+logger = logging.getLogger(__name__)
 
 
 class RewardsTreeProvider:
@@ -26,9 +31,19 @@ class RewardsTreeProvider:
         }
         """
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(self.settings.rewards_proofs_url)
-            response.raise_for_status()
-            return response.json()
+            try:
+                response = await client.get(self.settings.rewards_proofs_url)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                logger.warning(f"Failed to fetch rewards tree: HTTP {e.response.status_code}")
+                return {}
+            except httpx.RequestError as e:
+                logger.warning(f"Failed to fetch rewards tree: {e}")
+                return {}
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse rewards tree JSON: {e}")
+                return {}
 
     async def get_operator_rewards(self, operator_id: int) -> RewardsInfo | None:
         """Get rewards info for a specific operator."""

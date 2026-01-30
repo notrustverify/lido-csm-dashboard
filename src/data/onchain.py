@@ -1,10 +1,13 @@
 """On-chain data fetching via Web3."""
 
 import asyncio
+import logging
 from decimal import Decimal
 from functools import partial
 
 from web3 import Web3
+
+logger = logging.getLogger(__name__)
 
 from ..core.config import get_settings
 from ..core.contracts import (
@@ -25,7 +28,12 @@ class OnChainDataProvider:
 
     def __init__(self, rpc_url: str | None = None):
         self.settings = get_settings()
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url or self.settings.eth_rpc_url))
+        self.w3 = Web3(
+            Web3.HTTPProvider(
+                rpc_url or self.settings.eth_rpc_url,
+                request_kwargs={"timeout": 30},
+            )
+        )
 
         # Initialize contracts
         self.csmodule = self.w3.eth.contract(
@@ -178,8 +186,12 @@ class OnChainDataProvider:
         # Curve 2 is the current mainnet default (1.5 ETH first, 1.3 ETH subsequent)
         # Curve 0/1 were the original curves, now deprecated
         if curve_id == 0:  # Original Permissionless (deprecated)
+            logger.debug(f"Using deprecated curve 0 bond calculation")
             first_bond = Decimal("2.0")
-        else:  # Curve 1, 2, etc - current default curves
+        elif curve_id not in (1, 2):
+            logger.warning(f"Unknown curve_id {curve_id}, using default bond calculation")
+            first_bond = Decimal("1.5")
+        else:  # Curve 1, 2 - current default curves
             first_bond = Decimal("1.5")
 
         subsequent_bond = Decimal("1.3")
@@ -330,8 +342,8 @@ class OnChainDataProvider:
                     lambda: self.w3.eth.block_number
                 )
                 return [{"block": current_block, "logCid": current_cid}]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to get current log CID as fallback: {e}")
 
         return []
 
@@ -578,11 +590,12 @@ class OnChainDataProvider:
                         enriched_event["claim_timestamp"] = datetime.fromtimestamp(
                             claim_block["timestamp"], tz=timezone.utc
                         ).isoformat()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to get claim timestamp for block {claim.get('block')}: {e}")
 
                 enriched.append(enriched_event)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to enrich withdrawal event: {e}")
                 continue
 
         return enriched

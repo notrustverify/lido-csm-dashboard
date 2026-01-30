@@ -1,9 +1,15 @@
 """Etherscan API client for event queries."""
 
+import json
+import logging
+from decimal import Decimal
+
 import httpx
 from web3 import Web3
 
 from ..core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class EtherscanProvider:
@@ -47,7 +53,12 @@ class EtherscanProvider:
                 },
             )
 
-            data = response.json()
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse Etherscan response: {e}")
+                return []
+
             if data.get("status") != "1":
                 return []
 
@@ -115,7 +126,12 @@ class EtherscanProvider:
                 },
             )
 
-            data = response.json()
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse Etherscan transfer events response: {e}")
+                return []
+
             if data.get("status") != "1":
                 return []
 
@@ -193,7 +209,12 @@ class EtherscanProvider:
                 },
             )
 
-            data = response.json()
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse Etherscan withdrawal requested events: {e}")
+                return []
+
             if data.get("status") != "1":
                 return []
 
@@ -271,7 +292,12 @@ class EtherscanProvider:
                 },
             )
 
-            data = response.json()
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse Etherscan withdrawal claimed events: {e}")
+                return []
+
             if data.get("status") != "1":
                 return []
 
@@ -280,14 +306,14 @@ class EtherscanProvider:
                 try:
                     # requestId is topic1 (indexed)
                     request_id = int(log["topics"][1], 16)
-                    # amountOfETH is in data field
-                    amount_eth = int(log["data"], 16) / 10**18
+                    # amountOfETH is in data field - use Decimal for precision
+                    amount_eth = Decimal(int(log["data"], 16)) / Decimal(10**18)
 
                     results.append(
                         {
                             "request_id": request_id,
                             "tx_hash": log["transactionHash"],
-                            "amount_eth": amount_eth,
+                            "amount_eth": float(amount_eth),  # Convert to float for JSON serialization
                             "block": int(log["blockNumber"], 16),
                         }
                     )
