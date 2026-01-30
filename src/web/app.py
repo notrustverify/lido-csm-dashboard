@@ -101,7 +101,13 @@ def create_app() -> FastAPI:
             </div>
 
             <div id="validator-status" class="hidden mb-6 bg-gray-800 rounded-lg p-6">
-                <h3 class="text-lg font-bold mb-4">Validator Status (Beacon Chain)</h3>
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">Validator Status (Beacon Chain)</h3>
+                    <a id="beaconchain-link" href="#" target="_blank" rel="noopener"
+                       class="hidden px-3 py-1.5 bg-blue-600/80 hover:bg-blue-600 rounded text-sm font-medium inline-flex items-center gap-1">
+                        View on beaconcha.in <span class="text-xs">↗</span>
+                    </a>
+                </div>
                 <div class="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
                     <div class="bg-green-900/50 rounded-lg p-3 text-center">
                         <div class="text-xl font-bold text-green-400" id="status-active">0</div>
@@ -233,24 +239,24 @@ def create_app() -> FastAPI:
                             <tr class="text-gray-400 text-sm">
                                 <th class="text-left py-2">Metric</th>
                                 <th class="text-right py-2">28-Day</th>
-                                <th class="text-right py-2">Lifetime</th>
+                                <th id="apy-lifetime-header" class="hidden text-right py-2">Lifetime</th>
                             </tr>
                         </thead>
                         <tbody class="text-sm">
                             <tr>
                                 <td class="py-2 text-gray-400">Reward APY</td>
                                 <td class="py-2 text-right text-green-400" id="reward-apy-28d">--%</td>
-                                <td class="py-2 text-right text-green-400" id="reward-apy-ltd">--%</td>
+                                <td class="hidden py-2 text-right text-green-400" id="reward-apy-ltd">--%</td>
                             </tr>
                             <tr>
                                 <td class="py-2 text-gray-400">Bond APY (stETH)*</td>
                                 <td class="py-2 text-right text-green-400" id="bond-apy-28d">--%</td>
-                                <td class="py-2 text-right text-green-400" id="bond-apy-ltd">--%</td>
+                                <td class="hidden py-2 text-right text-green-400" id="bond-apy-ltd">--%</td>
                             </tr>
                             <tr class="border-t border-gray-700">
                                 <td class="py-3 font-bold">NET APY</td>
                                 <td class="py-3 text-right font-bold text-yellow-400" id="net-apy-28d">--%</td>
-                                <td class="py-3 text-right font-bold text-yellow-400" id="net-apy-ltd">--%</td>
+                                <td class="hidden py-3 text-right font-bold text-yellow-400" id="net-apy-ltd">--%</td>
                             </tr>
                         </tbody>
                     </table>
@@ -292,8 +298,10 @@ def create_app() -> FastAPI:
                                 <th class="text-left py-2">#</th>
                                 <th class="text-left py-2">Date Range</th>
                                 <th class="text-right py-2">Rewards</th>
-                                <th class="text-right py-2">Validators</th>
-                                <th class="text-right py-2">Per Val</th>
+                                <th class="text-right py-2">Vals</th>
+                                <th class="text-right py-2">Reward APY</th>
+                                <th class="text-right py-2">Bond APY</th>
+                                <th class="text-right py-2">Net APY</th>
                             </tr>
                         </thead>
                         <tbody id="history-tbody">
@@ -346,6 +354,7 @@ def create_app() -> FastAPI:
         const loadDetailsBtn = document.getElementById('load-details');
         const detailsLoading = document.getElementById('details-loading');
         const validatorStatus = document.getElementById('validator-status');
+        const beaconchainLink = document.getElementById('beaconchain-link');
         const apySection = document.getElementById('apy-section');
         const healthSection = document.getElementById('health-section');
         const historySection = document.getElementById('history-section');
@@ -388,6 +397,12 @@ def create_app() -> FastAPI:
             withdrawalTbody.innerHTML = '';
             withdrawalsLoaded = false;
             loadWithdrawalsBtn.textContent = 'Load Withdrawals';
+            beaconchainLink.classList.add('hidden');
+            beaconchainLink.href = '#';
+            document.getElementById('apy-lifetime-header').classList.add('hidden');
+            document.getElementById('reward-apy-ltd').classList.add('hidden');
+            document.getElementById('bond-apy-ltd').classList.add('hidden');
+            document.getElementById('net-apy-ltd').classList.add('hidden');
             document.getElementById('active-since-row').classList.add('hidden');
             loadDetailsBtn.classList.remove('hidden');
             loadDetailsBtn.disabled = false;
@@ -492,6 +507,16 @@ def create_app() -> FastAPI:
                 }
 
                 validatorStatus.classList.remove('hidden');
+
+                // Build beaconcha.in dashboard URL with validator indices
+                if (data.validator_details && data.validator_details.length > 0) {
+                    const validatorIds = data.validator_details
+                        .map(v => v.index !== null && v.index !== undefined ? v.index : v.pubkey)
+                        .slice(0, 100)
+                        .join(',');
+                    beaconchainLink.href = `https://beaconcha.in/dashboard?validators=${validatorIds}`;
+                    beaconchainLink.classList.remove('hidden');
+                }
 
                 // Populate APY metrics if available
                 if (data.apy) {
@@ -718,7 +743,7 @@ def create_app() -> FastAPI:
                 historyLoading.classList.add('hidden');
 
                 if (!response.ok || !data.apy || !data.apy.frames) {
-                    historyTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">No history available</td></tr>';
+                    historyTbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-gray-400">No history available</td></tr>';
                     historyTable.classList.remove('hidden');
                     return;
                 }
@@ -727,31 +752,51 @@ def create_app() -> FastAPI:
                 historyTbody.innerHTML = data.apy.frames.map(frame => {
                     const startDate = new Date(frame.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                     const endDate = new Date(frame.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    const perVal = frame.validator_count > 0 ? (frame.rewards_eth / frame.validator_count).toFixed(6) : '--';
+                    const rewardApy = frame.apy !== null && frame.apy !== undefined ? frame.apy.toFixed(2) + '%' : '--';
+                    const bondApy = frame.bond_apy !== null && frame.bond_apy !== undefined ? frame.bond_apy.toFixed(2) + '%' : '--';
+                    const netApy = frame.net_apy !== null && frame.net_apy !== undefined ? frame.net_apy.toFixed(2) + '%' : '--';
                     return `<tr class="border-t border-gray-700">
                         <td class="py-2">${frame.frame_number}</td>
                         <td class="py-2">${startDate} - ${endDate}</td>
                         <td class="py-2 text-right text-green-400">${frame.rewards_eth.toFixed(4)}</td>
                         <td class="py-2 text-right">${frame.validator_count}</td>
-                        <td class="py-2 text-right text-gray-400">${perVal}</td>
+                        <td class="py-2 text-right text-green-400">${rewardApy}</td>
+                        <td class="py-2 text-right text-green-400">${bondApy}</td>
+                        <td class="py-2 text-right text-yellow-400 font-bold">${netApy}</td>
                     </tr>`;
                 }).join('');
 
-                // Add total row
+                // Add total row with lifetime APYs
                 const totalEth = data.apy.frames.reduce((sum, f) => sum + f.rewards_eth, 0);
+                const lifetimeRewardApy = data.apy.lifetime_reward_apy !== null && data.apy.lifetime_reward_apy !== undefined ? data.apy.lifetime_reward_apy.toFixed(2) + '%' : '--';
+                const lifetimeBondApy = data.apy.lifetime_bond_apy !== null && data.apy.lifetime_bond_apy !== undefined ? data.apy.lifetime_bond_apy.toFixed(2) + '%' : '--';
+                const lifetimeNetApy = data.apy.lifetime_net_apy !== null && data.apy.lifetime_net_apy !== undefined ? data.apy.lifetime_net_apy.toFixed(2) + '%' : '--';
                 historyTbody.innerHTML += `<tr class="border-t-2 border-gray-600 font-bold">
-                    <td class="py-2" colspan="2">Total</td>
+                    <td class="py-2" colspan="2">Lifetime</td>
                     <td class="py-2 text-right text-yellow-400">${totalEth.toFixed(4)}</td>
                     <td class="py-2 text-right">--</td>
-                    <td class="py-2 text-right">--</td>
+                    <td class="py-2 text-right text-green-400">${lifetimeRewardApy}</td>
+                    <td class="py-2 text-right text-green-400">${lifetimeBondApy}</td>
+                    <td class="py-2 text-right text-yellow-400">${lifetimeNetApy}</td>
                 </tr>`;
+
+                // Reveal and populate lifetime APY columns
+                if (data.apy) {
+                    document.getElementById('apy-lifetime-header').classList.remove('hidden');
+                    document.getElementById('reward-apy-ltd').textContent = formatApy(data.apy.lifetime_reward_apy);
+                    document.getElementById('reward-apy-ltd').classList.remove('hidden');
+                    document.getElementById('bond-apy-ltd').textContent = formatApy(data.apy.lifetime_bond_apy);
+                    document.getElementById('bond-apy-ltd').classList.remove('hidden');
+                    document.getElementById('net-apy-ltd').textContent = formatApy(data.apy.lifetime_net_apy);
+                    document.getElementById('net-apy-ltd').classList.remove('hidden');
+                }
 
                 historyTable.classList.remove('hidden');
                 historyLoaded = true;
                 loadHistoryBtn.textContent = 'Hide History';
             } catch (err) {
                 historyLoading.classList.add('hidden');
-                historyTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-red-400">Failed to load history</td></tr>';
+                historyTbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-red-400">Failed to load history</td></tr>';
                 historyTable.classList.remove('hidden');
             }
         });

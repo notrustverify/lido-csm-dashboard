@@ -364,15 +364,22 @@ class OperatorService:
 
             # Lifetime bond earnings (sum of all frame durations with per-frame APR)
             # When include_history=True, calculate accurate lifetime APY with per-frame bond
+            # Also build frame_list here to avoid duplicate loop
             if frames:
                 lifetime_bond_sum = 0.0
                 # For accurate lifetime APY calculation (duration-weighted)
                 frame_reward_apys = []
                 frame_bond_apys = []
                 frame_durations = []
+                frame_list = []  # Build frame_list here instead of separate loop
 
-                for f in frames:
+                for i, f in enumerate(frames):
                     f_days = self.ipfs_logs.calculate_frame_duration_days(f)
+                    f_eth = await self.onchain.shares_to_eth(f.distributed_rewards)
+                    f_apy = None
+                    f_bond_apy = None
+                    f_net_apy = None
+
                     if f_days > 0:
                         # Use average historical APR for each frame period
                         f_start_ts = BEACON_GENESIS + (f.start_epoch * 384)
@@ -385,22 +392,44 @@ class OperatorService:
 
                         if f_apr is not None:
                             # When include_history=True and we have validator count, use per-frame bond
-                            if include_history and f.validator_count > 0 and f_days > 0:
+                            if include_history and f.validator_count > 0:
                                 f_bond = self.onchain.calculate_required_bond(
                                     f.validator_count, curve_id
                                 )
                                 # Keep calculations in Decimal for precision
                                 lifetime_bond_sum += float(f_bond * Decimal(f_apr / 100) * Decimal(f_days / 365))
 
-                                # Calculate per-frame reward APY for weighted average
-                                f_eth = await self.onchain.shares_to_eth(f.distributed_rewards)
+                                # Calculate per-frame reward APY using accurate per-frame bond
                                 if f_bond > 0:
-                                    f_reward_apy = float((f_eth / f_bond) * Decimal(365.0 / f_days) * Decimal(100))
-                                    frame_reward_apys.append(f_reward_apy)
+                                    f_apy = round(float((f_eth / f_bond) * Decimal(365.0 / f_days) * Decimal(100)), 2)
+                                    f_bond_apy = round(f_apr, 2)
+                                    f_net_apy = round(f_apy + f_bond_apy, 2)
+
+                                    frame_reward_apys.append(f_apy)
                                     frame_bond_apys.append(f_apr)
                                     frame_durations.append(f_days)
-                            elif f_days > 0:
+                            else:
                                 lifetime_bond_sum += float(bond_eth * Decimal(f_apr / 100) * Decimal(f_days / 365))
+                                # Fallback: use current bond for APY calc
+                                if bond_eth >= MIN_BOND_ETH:
+                                    f_apy = round(float(f_eth / bond_eth) * (365.0 / f_days) * 100, 2)
+
+                    # Build frame_list entry if history requested
+                    if include_history:
+                        frame_list.append(
+                            DistributionFrame(
+                                frame_number=i + 1,
+                                start_date=epoch_to_dt(f.start_epoch).isoformat(),
+                                end_date=epoch_to_dt(f.end_epoch).isoformat(),
+                                rewards_eth=float(f_eth),
+                                rewards_shares=f.distributed_rewards,
+                                duration_days=round(f_days, 1),
+                                validator_count=f.validator_count,
+                                apy=f_apy,
+                                bond_apy=f_bond_apy,
+                                net_apy=f_net_apy,
+                            )
+                        )
 
                 if lifetime_bond_sum > 0:
                     lifetime_bond_eth = round(lifetime_bond_sum, 6)
@@ -452,30 +481,6 @@ class OperatorService:
             lifetime_net_total_eth = round(
                 (lifetime_distribution_eth or 0) + (lifetime_bond_eth or 0), 6
             )
-
-        # 6. Build frame history if requested
-        if include_history and frames:
-            frame_list = []
-            for i, f in enumerate(frames):
-                # Convert shares to ETH (not just dividing by 10^18)
-                f_eth = await self.onchain.shares_to_eth(f.distributed_rewards)
-                f_days = self.ipfs_logs.calculate_frame_duration_days(f)
-                f_apy = None
-                if f_days > 0 and bond_eth >= MIN_BOND_ETH:
-                    f_apy = round(float(f_eth / bond_eth) * (365.0 / f_days) * 100, 2)
-
-                frame_list.append(
-                    DistributionFrame(
-                        frame_number=i + 1,
-                        start_date=epoch_to_dt(f.start_epoch).isoformat(),
-                        end_date=epoch_to_dt(f.end_epoch).isoformat(),
-                        rewards_eth=float(f_eth),
-                        rewards_shares=f.distributed_rewards,
-                        duration_days=round(f_days, 1),
-                        validator_count=f.validator_count,
-                        apy=f_apy,
-                    )
-                )
 
         return APYMetrics(
             previous_distribution_eth=previous_distribution_eth,

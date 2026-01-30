@@ -58,7 +58,9 @@ class DistributionFrame(BaseModel):
     rewards_shares: int
     duration_days: float
     validator_count: int = 0  # Number of validators in this frame
-    apy: float | None = None  # Annualized for this frame (kept for backwards compat)
+    apy: float | None = None  # Reward APY for this frame (kept for backwards compat)
+    bond_apy: float | None = None  # Bond APY for this frame
+    net_apy: float | None = None  # Net APY (reward + bond) for this frame
 
 
 class WithdrawalEvent(BaseModel):
