@@ -720,13 +720,18 @@ def create_app() -> FastAPI:
                     </tr>`;
                 }).join('');
 
-                // Add total row
+                // Add total row with lifetime APYs
                 const totalEth = data.apy.frames.reduce((sum, f) => sum + f.rewards_eth, 0);
+                const lifetimeRewardApy = data.apy.lifetime_reward_apy !== null && data.apy.lifetime_reward_apy !== undefined ? data.apy.lifetime_reward_apy.toFixed(2) + '%' : '--';
+                const lifetimeBondApy = data.apy.lifetime_bond_apy !== null && data.apy.lifetime_bond_apy !== undefined ? data.apy.lifetime_bond_apy.toFixed(2) + '%' : '--';
+                const lifetimeNetApy = data.apy.lifetime_net_apy !== null && data.apy.lifetime_net_apy !== undefined ? data.apy.lifetime_net_apy.toFixed(2) + '%' : '--';
                 historyTbody.innerHTML += `<tr class="border-t-2 border-gray-600 font-bold">
-                    <td class="py-2" colspan="2">Total</td>
+                    <td class="py-2" colspan="2">Lifetime</td>
                     <td class="py-2 text-right text-yellow-400">${totalEth.toFixed(4)}</td>
                     <td class="py-2 text-right">--</td>
-                    <td class="py-2 text-right">--</td>
+                    <td class="py-2 text-right text-green-400">${lifetimeRewardApy}</td>
+                    <td class="py-2 text-right text-green-400">${lifetimeBondApy}</td>
+                    <td class="py-2 text-right text-yellow-400">${lifetimeNetApy}</td>
                 </tr>`;
 
                 historyTable.classList.remove('hidden');
